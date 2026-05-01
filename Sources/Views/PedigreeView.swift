@@ -126,7 +126,7 @@ struct PedigreeView: View {
                     .frame(width: 96)
             }
             .padding(8)
-            .background(.white, in: RoundedRectangle(cornerRadius: 8))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(viewModel.selectedNodeID == node.id ? AppTheme.strawberry : AppTheme.line, lineWidth: viewModel.selectedNodeID == node.id ? 2 : 1))
         }
         .buttonStyle(.plain)

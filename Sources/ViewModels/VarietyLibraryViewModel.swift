@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 enum DiscoveryFilter: String, CaseIterable, Identifiable {
     case all = "すべて"
@@ -17,6 +18,7 @@ final class VarietyLibraryViewModel: ObservableObject {
     @Published var varietyImages: [VarietyImage] = []
     @Published var reviewImages: [ReviewImage] = []
     @Published var signedImageURLs: [String: URL] = [:]
+    @Published var loadedImages: [String: UIImage] = [:]
     @Published var searchText = ""
     @Published var discoveryFilter: DiscoveryFilter = .all
     @Published var prefectureFilter = ""
@@ -94,6 +96,31 @@ final class VarietyLibraryViewModel: ObservableObject {
             .first
     }
 
+    func reviews(for varietyID: String) -> [Review] {
+        reviews
+            .filter { $0.varietyID == varietyID && $0.deletedAt == nil }
+            .sorted { $0.tastedDate > $1.tastedDate }
+    }
+
+    func averageOverall(for varietyID: String) -> Double? {
+        let rows = reviews(for: varietyID)
+        guard !rows.isEmpty else { return nil }
+        return Double(rows.map(\.overall).reduce(0, +)) / Double(rows.count)
+    }
+
+    func tasteAverages(for varietyID: String) -> [(String, Double)] {
+        let rows = reviews(for: varietyID)
+        guard !rows.isEmpty else { return [] }
+        let count = Double(rows.count)
+        return [
+            ("甘味", Double(rows.map(\.sweetness).reduce(0, +)) / count),
+            ("酸味", Double(rows.map(\.sourness).reduce(0, +)) / count),
+            ("香り", Double(rows.map(\.aroma).reduce(0, +)) / count),
+            ("食感", Double(rows.map(\.texture).reduce(0, +)) / count),
+            ("見た目", Double(rows.map(\.appearance).reduce(0, +)) / count)
+        ]
+    }
+
     func primaryImage(for varietyID: String) -> VarietyImage? {
         let images = varietyImages.filter { $0.varietyID == varietyID }
         return images.first(where: \.isPrimary) ?? images.first
@@ -103,21 +130,49 @@ final class VarietyLibraryViewModel: ObservableObject {
         varietyImages.filter { $0.varietyID == varietyID }
     }
 
+    func reviewImages(for reviewID: String) -> [ReviewImage] {
+        reviewImages.filter { $0.reviewID == reviewID }
+    }
+
     func varietyName(_ id: String) -> String {
         varieties.first(where: { $0.id == id })?.name ?? "未選択"
     }
 
     func imageURL(for image: VarietyImage?) -> URL? {
         guard let image else { return nil }
-        return signedImageURLs[image.storagePath]
+        return imageURL(bucket: "variety-images", path: image.storagePath)
+    }
+
+    func imageURL(bucket: String, path: String) -> URL? {
+        signedImageURLs[cacheKey(bucket: bucket, path: path)]
+    }
+
+    func loadedImage(bucket: String, path: String?) -> UIImage? {
+        guard let path else { return nil }
+        return loadedImages[cacheKey(bucket: bucket, path: path)]
     }
 
     func ensureSignedURL(for image: VarietyImage) async {
-        guard signedImageURLs[image.storagePath] == nil else { return }
+        await ensureSignedURL(bucket: "variety-images", path: image.storagePath)
+    }
+
+    func ensureSignedURL(bucket: String, path: String) async {
+        let key = cacheKey(bucket: bucket, path: path)
+        guard signedImageURLs[key] == nil else { return }
         do {
-            signedImageURLs[image.storagePath] = try await repository.signedURL(bucket: "variety-images", path: image.storagePath)
+            signedImageURLs[key] = try await repository.signedURL(bucket: bucket, path: path)
         } catch {
             // Missing image URLs should not block the app.
+        }
+    }
+
+    func ensureImage(bucket: String, path: String) async {
+        let key = cacheKey(bucket: bucket, path: path)
+        guard loadedImages[key] == nil else { return }
+        do {
+            loadedImages[key] = try await repository.downloadImage(bucket: bucket, path: path)
+        } catch {
+            await ensureSignedURL(bucket: bucket, path: path)
         }
     }
 
@@ -133,8 +188,12 @@ final class VarietyLibraryViewModel: ObservableObject {
     private func preloadPrimaryImageURLs() async {
         let firstImages = varieties.compactMap { primaryImage(for: $0.id) }.prefix(40)
         for image in firstImages {
-            await ensureSignedURL(for: image)
+            await ensureImage(bucket: "variety-images", path: image.storagePath)
         }
+    }
+
+    private func cacheKey(bucket: String, path: String) -> String {
+        "\(bucket)/\(path)"
     }
 }
 

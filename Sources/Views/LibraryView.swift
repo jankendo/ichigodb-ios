@@ -77,6 +77,12 @@ struct LibraryView: View {
 
     private var header: some View {
         VStack(spacing: 12) {
+            AppScreenHeader(
+                title: "IchigoDB",
+                subtitle: "品種・画像・評価をすばやく確認",
+                systemImage: "sparkle.magnifyingglass"
+            )
+
             HStack(spacing: 10) {
                 MetricPill(title: "図鑑進捗", value: library.progressText)
                 MetricPill(title: "登録品種", value: "\(library.varieties.count)")
@@ -102,13 +108,31 @@ struct LibraryView: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
 
+                HStack(spacing: 10) {
+                    Button {
+                        editorVM.reset()
+                        selectedTab = .varietyEditor
+                    } label: {
+                        Label("新規登録", systemImage: "plus")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+
+                    Button {
+                        reviewVM.reset()
+                        selectedTab = .reviewEditor
+                    } label: {
+                        Label("評価追加", systemImage: "star")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+
                 ErrorBanner(message: library.errorMessage)
             }
         }
         .padding(.horizontal)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .background(.background)
+        .background(AppTheme.surface)
     }
 
     private var compactList: some View {
@@ -206,11 +230,15 @@ private struct VarietyRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            AsyncVarietyImage(url: library.imageURL(for: library.primaryImage(for: variety.id)), height: 92)
+            AsyncVarietyImage(
+                image: library.loadedImage(bucket: "variety-images", path: library.primaryImage(for: variety.id)?.storagePath),
+                url: library.imageURL(for: library.primaryImage(for: variety.id)),
+                height: 92
+            )
                 .frame(width: 92)
                 .task {
                     if let image = library.primaryImage(for: variety.id) {
-                        await library.ensureSignedURL(for: image)
+                        await library.ensureImage(bucket: "variety-images", path: image.storagePath)
                     }
                 }
 
@@ -228,6 +256,17 @@ private struct VarietyRow: View {
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(2)
+                if let average = library.averageOverall(for: variety.id) {
+                    HStack(spacing: 8) {
+                        Label(String(format: "平均 %.1f/10", average), systemImage: "chart.line.uptrend.xyaxis")
+                            .foregroundStyle(AppTheme.strawberry)
+                        if let latest = library.latestReview(for: variety.id) {
+                            Text("最新 \(latest.tastedDate)")
+                                .foregroundStyle(AppTheme.muted)
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                }
                 HStack {
                     Label("\(library.reviewCount(for: variety.id))件", systemImage: "star")
                     if let prefecture = variety.originPrefecture {
@@ -253,6 +292,66 @@ private struct VarietyRow: View {
     }
 }
 
+private struct ReviewHistoryRow: View {
+    @EnvironmentObject private var library: VarietyLibraryViewModel
+    var review: Review
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(review.tastedDate)
+                        .font(.headline)
+                    if let comment = review.comment, !comment.isEmpty {
+                        Text(comment)
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.muted)
+                            .lineLimit(3)
+                    }
+                }
+                Spacer()
+                CapsuleBadge(text: "\(review.overall)/10", tint: AppTheme.strawberry)
+            }
+
+            HStack(spacing: 6) {
+                miniScore("甘", review.sweetness)
+                miniScore("酸", review.sourness)
+                miniScore("香", review.aroma)
+                miniScore("食", review.texture)
+                miniScore("見", review.appearance)
+            }
+
+            if !library.reviewImages(for: review.id).isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(library.reviewImages(for: review.id)) { image in
+                            AsyncVarietyImage(
+                                image: library.loadedImage(bucket: "review-images", path: image.storagePath),
+                                url: library.imageURL(bucket: "review-images", path: image.storagePath),
+                                height: 64
+                            )
+                            .frame(width: 64)
+                            .task {
+                                await library.ensureImage(bucket: "review-images", path: image.storagePath)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func miniScore(_ label: String, _ value: Int) -> some View {
+        Text("\(label)\(value)")
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.elevated, in: Capsule())
+            .foregroundStyle(AppTheme.ink)
+    }
+}
+
 struct VarietyDetailView: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -263,10 +362,14 @@ struct VarietyDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                AsyncVarietyImage(url: library.imageURL(for: library.primaryImage(for: variety.id)), height: horizontalSizeClass == .regular ? 320 : 230)
+                AsyncVarietyImage(
+                    image: library.loadedImage(bucket: "variety-images", path: library.primaryImage(for: variety.id)?.storagePath),
+                    url: library.imageURL(for: library.primaryImage(for: variety.id)),
+                    height: horizontalSizeClass == .regular ? 320 : 230
+                )
                     .task {
                         if let image = library.primaryImage(for: variety.id) {
-                            await library.ensureSignedURL(for: image)
+                            await library.ensureImage(bucket: "variety-images", path: image.storagePath)
                         }
                     }
 
@@ -289,18 +392,7 @@ struct VarietyDetailView: View {
                     MetricPill(title: "収穫", value: "\(IchigoFormat.month(variety.harvestStartMonth)) - \(IchigoFormat.month(variety.harvestEndMonth))")
                 }
 
-                if let latest = library.latestReview(for: variety.id) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("最新評価")
-                            .font(.headline)
-                        Text("\(latest.tastedDate) / 総合 \(latest.overall)/10")
-                        if let comment = latest.comment, !comment.isEmpty {
-                            Text(comment)
-                                .foregroundStyle(AppTheme.muted)
-                        }
-                    }
-                    .cardSurface()
-                }
+                reviewSummary
 
                 if let text = variety.characteristicsSummary ?? variety.description, !text.isEmpty {
                     Text(text)
@@ -310,6 +402,8 @@ struct VarietyDetailView: View {
                 }
 
                 detailRows
+
+                reviewTimeline
             }
             .padding()
             .frame(maxWidth: 860, alignment: .leading)
@@ -347,6 +441,69 @@ struct VarietyDetailView: View {
             labeled("タグ", variety.tags.isEmpty ? nil : variety.tags.joined(separator: ", "))
         }
         .cardSurface()
+    }
+
+    private var reviewSummary: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("評価サマリ")
+                    .font(.headline)
+                Spacer()
+                if let average = library.averageOverall(for: variety.id) {
+                    CapsuleBadge(text: String(format: "平均 %.1f/10", average), tint: AppTheme.strawberry)
+                } else {
+                    CapsuleBadge(text: "評価なし", tint: AppTheme.muted)
+                }
+            }
+
+            if library.reviews(for: variety.id).isEmpty {
+                Text("まだ評価がありません。下の「評価する」から最初の記録を追加できます。")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(library.tasteAverages(for: variety.id), id: \.0) { label, value in
+                        HStack {
+                            Text(label)
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 44, alignment: .leading)
+                            ProgressView(value: value, total: 5)
+                                .tint(AppTheme.strawberry)
+                            Text(String(format: "%.1f", value))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(AppTheme.muted)
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+        }
+        .cardSurface()
+    }
+
+    private var reviewTimeline: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("評価履歴")
+                .font(.headline)
+
+            if displayedReviews.isEmpty {
+                Text("ユーザ評価はまだ登録されていません。")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+            } else {
+                ForEach(displayedReviews) { review in
+                    ReviewHistoryRow(review: review)
+                    if review.id != displayedReviews.last?.id {
+                        Divider()
+                    }
+                }
+            }
+        }
+        .cardSurface()
+    }
+
+    private var displayedReviews: [Review] {
+        Array(library.reviews(for: variety.id).prefix(8))
     }
 
     private func labeled(_ title: String, _ value: String?) -> some View {

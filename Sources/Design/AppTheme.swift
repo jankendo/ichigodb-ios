@@ -3,10 +3,14 @@ import SwiftUI
 enum AppTheme {
     static let strawberry = Color(red: 0.86, green: 0.12, blue: 0.22)
     static let leaf = Color(red: 0.10, green: 0.48, blue: 0.32)
-    static let ink = Color(red: 0.08, green: 0.09, blue: 0.11)
-    static let muted = Color(red: 0.42, green: 0.45, blue: 0.50)
-    static let surface = Color(red: 0.98, green: 0.98, blue: 0.97)
-    static let line = Color(red: 0.88, green: 0.88, blue: 0.86)
+    static let gold = Color(red: 0.95, green: 0.66, blue: 0.12)
+    static let ink = Color(uiColor: .label)
+    static let muted = Color(uiColor: .secondaryLabel)
+    static let surface = Color(uiColor: .systemGroupedBackground)
+    static let card = Color(uiColor: .secondarySystemGroupedBackground)
+    static let elevated = Color(uiColor: .tertiarySystemGroupedBackground)
+    static let line = Color(uiColor: .separator)
+    static let field = Color(uiColor: .systemBackground)
 }
 
 struct CapsuleBadge: View {
@@ -38,7 +42,7 @@ struct MetricPill: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
     }
 }
@@ -61,7 +65,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(AppTheme.ink)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .background(AppTheme.surface.opacity(configuration.isPressed ? 0.65 : 1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(AppTheme.card.opacity(configuration.isPressed ? 0.65 : 1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
     }
 }
@@ -69,7 +73,43 @@ struct SecondaryButtonStyle: ButtonStyle {
 extension View {
     func cardSurface() -> some View {
         padding(14)
-            .background(.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
+    }
+}
+
+struct BrandMark: View {
+    var size: CGFloat = 34
+
+    var body: some View {
+        Image("AppMark")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+            .shadow(color: AppTheme.strawberry.opacity(0.18), radius: 6, y: 2)
+    }
+}
+
+struct AppScreenHeader: View {
+    var title: String
+    var subtitle: String
+    var systemImage: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            BrandMark(size: 42)
+            VStack(alignment: .leading, spacing: 3) {
+                Label(title, systemImage: systemImage)
+                    .font(.title2.bold())
+                    .foregroundStyle(AppTheme.ink)
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .cardSurface()
     }
 }

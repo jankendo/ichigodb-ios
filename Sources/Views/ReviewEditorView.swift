@@ -8,6 +8,11 @@ struct ReviewEditorView: View {
         NavigationStack {
             Form {
                 Section {
+                    AppScreenHeader(
+                        title: "品種評価",
+                        subtitle: "5項目をタップして、試食メモをすばやく残します。",
+                        systemImage: "star.leadinghalf.filled"
+                    )
                     HStack(spacing: 10) {
                         MetricPill(title: "総合", value: "\(viewModel.draft.overall)/10")
                         MetricPill(title: "画像", value: "\(viewModel.selectedImages.count)/3")
@@ -117,7 +122,7 @@ private struct ScoreCapsuleControl: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
                             .foregroundStyle(value == score ? .white : AppTheme.ink)
-                            .background(value == score ? AppTheme.strawberry : AppTheme.surface, in: Capsule())
+                            .background(value == score ? AppTheme.strawberry : AppTheme.card, in: Capsule())
                             .overlay(Capsule().stroke(value == score ? AppTheme.strawberry : AppTheme.line))
                     }
                     .buttonStyle(.plain)

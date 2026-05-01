@@ -316,6 +316,14 @@ final class IchigoRepository {
         try await client.signedURL(bucket: bucket, path: path)
     }
 
+    func downloadImage(bucket: String, path: String) async throws -> UIImage {
+        let data = try await client.downloadObject(bucket: bucket, path: path)
+        guard let image = UIImage(data: data) else {
+            throw RepositoryError.imagePreparationFailed
+        }
+        return image
+    }
+
     private func findDuplicateReview(varietyID: String, tastedDate: String) async throws -> Review? {
         let rows = try await client.select(
             Review.self,

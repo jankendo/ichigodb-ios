@@ -1,13 +1,25 @@
 import PhotosUI
 import SwiftUI
+import UIKit
 
 struct AsyncVarietyImage: View {
+    var image: UIImage?
     var url: URL?
     var height: CGFloat = 120
 
+    init(image: UIImage? = nil, url: URL? = nil, height: CGFloat = 120) {
+        self.image = image
+        self.url = url
+        self.height = height
+    }
+
     var body: some View {
         Group {
-            if let url {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let url {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -27,13 +39,13 @@ struct AsyncVarietyImage: View {
         .frame(height: height)
         .frame(maxWidth: .infinity)
         .clipped()
-        .background(AppTheme.surface)
+        .background(AppTheme.elevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private var placeholder: some View {
         ZStack {
-            AppTheme.surface
+            AppTheme.elevated
             Image(systemName: "camera.macro")
                 .font(.largeTitle)
                 .foregroundStyle(AppTheme.muted.opacity(0.65))
