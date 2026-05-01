@@ -7,6 +7,14 @@ struct ReviewEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack(spacing: 10) {
+                        MetricPill(title: "総合", value: "\(viewModel.draft.overall)/10")
+                        MetricPill(title: "画像", value: "\(viewModel.selectedImages.count)/3")
+                    }
+                }
+                .listRowBackground(Color.clear)
+
                 Section("対象品種") {
                     Picker("品種", selection: $viewModel.draft.varietyID) {
                         Text("選択してください").tag("")
@@ -18,18 +26,11 @@ struct ReviewEditorView: View {
                 }
 
                 Section("スコア") {
-                    scoreStepper("甘味", value: $viewModel.draft.sweetness)
-                    scoreStepper("酸味", value: $viewModel.draft.sourness)
-                    scoreStepper("香り", value: $viewModel.draft.aroma)
-                    scoreStepper("食感", value: $viewModel.draft.texture)
-                    scoreStepper("見た目", value: $viewModel.draft.appearance)
-                    HStack {
-                        Text("総合")
-                        Spacer()
-                        Text("\(viewModel.draft.overall)/10")
-                            .font(.title2.bold())
-                            .foregroundStyle(AppTheme.strawberry)
-                    }
+                    ScoreCapsuleControl(title: "甘味", value: $viewModel.draft.sweetness)
+                    ScoreCapsuleControl(title: "酸味", value: $viewModel.draft.sourness)
+                    ScoreCapsuleControl(title: "香り", value: $viewModel.draft.aroma)
+                    ScoreCapsuleControl(title: "食感", value: $viewModel.draft.texture)
+                    ScoreCapsuleControl(title: "見た目", value: $viewModel.draft.appearance)
                 }
 
                 Section("購入メモ") {
@@ -49,6 +50,17 @@ struct ReviewEditorView: View {
                 }
             }
             .navigationTitle("品種評価")
+            .navigationBarTitleDisplayMode(.large)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.surface)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("クリア") {
+                        viewModel.reset()
+                    }
+                    .disabled(viewModel.isSaving)
+                }
+            }
             .safeAreaInset(edge: .bottom) {
                 Button {
                     Task {
@@ -78,16 +90,41 @@ struct ReviewEditorView: View {
             }
         }
     }
+}
 
-    private func scoreStepper(_ title: String, value: Binding<Int>) -> some View {
-        Stepper(value: value, in: 1...5) {
+private struct ScoreCapsuleControl: View {
+    var title: String
+    @Binding var value: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(title)
-                Spacer()
-                Text("\(value.wrappedValue)")
                     .font(.headline)
-                    .foregroundStyle(AppTheme.ink)
+                Spacer()
+                Text("\(value)")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(AppTheme.strawberry)
+            }
+
+            HStack(spacing: 8) {
+                ForEach(1...5, id: \.self) { score in
+                    Button {
+                        value = score
+                    } label: {
+                        Text("\(score)")
+                            .font(.headline.monospacedDigit())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .foregroundStyle(value == score ? .white : AppTheme.ink)
+                            .background(value == score ? AppTheme.strawberry : AppTheme.surface, in: Capsule())
+                            .overlay(Capsule().stroke(value == score ? AppTheme.strawberry : AppTheme.line))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(title) \(score)")
+                }
             }
         }
+        .padding(.vertical, 6)
     }
 }

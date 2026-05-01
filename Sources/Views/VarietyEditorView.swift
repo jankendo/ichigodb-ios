@@ -8,6 +8,14 @@ struct VarietyEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack(spacing: 10) {
+                        MetricPill(title: viewModel.isEditing ? "編集中" : "モード", value: viewModel.isEditing ? "更新" : "新規")
+                        MetricPill(title: "画像", value: "\(viewModel.selectedImages.count)/5")
+                    }
+                }
+                .listRowBackground(Color.clear)
+
                 Section("編集対象") {
                     Picker("品種", selection: $selectedEditID) {
                         Text("新規登録").tag("")
@@ -85,6 +93,21 @@ struct VarietyEditorView: View {
                 }
             }
             .navigationTitle(viewModel.isEditing ? "品種編集" : "品種登録")
+            .navigationBarTitleDisplayMode(.large)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.surface)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("新規") {
+                        selectedEditID = ""
+                        viewModel.reset()
+                    }
+                    .disabled(viewModel.isSaving)
+                }
+            }
+            .onAppear {
+                selectedEditID = viewModel.draft.id ?? ""
+            }
             .safeAreaInset(edge: .bottom) {
                 Button {
                     Task {

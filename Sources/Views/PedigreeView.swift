@@ -33,32 +33,64 @@ struct PedigreeView: View {
                     .padding(.bottom, 8)
             }
             .navigationTitle("交配図")
+            .navigationBarTitleDisplayMode(.large)
+            .background(AppTheme.surface)
         }
     }
 
     private var controls: some View {
         VStack(spacing: 10) {
-            Picker("起点品種", selection: $viewModel.rootID) {
-                Text("全体").tag("")
-                ForEach(library.varieties) { variety in
-                    Text(variety.name).tag(variety.id)
+            HStack(spacing: 10) {
+                MetricPill(title: "品種", value: "\(library.varieties.count)")
+                MetricPill(title: "リンク", value: "\(library.parentLinks.count)")
+                MetricPill(title: "表示", value: viewModel.direction.label)
+            }
+
+            ViewThatFits {
+                HStack(spacing: 10) {
+                    rootPicker
+                    directionPicker
+                }
+                VStack(spacing: 10) {
+                    rootPicker
+                    directionPicker
                 }
             }
-            .pickerStyle(.menu)
 
-            Picker("表示方向", selection: $viewModel.direction) {
-                ForEach(PedigreeDirection.allCases) { direction in
-                    Text(direction.label).tag(direction)
+            ViewThatFits {
+                HStack {
+                    Stepper("深さ \(viewModel.maxDepth)", value: $viewModel.maxDepth, in: 1...5)
+                    Stepper("最大 \(viewModel.maxNodes)", value: $viewModel.maxNodes, in: 30...120, step: 10)
                 }
-            }
-            .pickerStyle(.segmented)
-
-            HStack {
-                Stepper("深さ \(viewModel.maxDepth)", value: $viewModel.maxDepth, in: 1...5)
-                Stepper("最大 \(viewModel.maxNodes)", value: $viewModel.maxNodes, in: 30...120, step: 10)
+                VStack(alignment: .leading) {
+                    Stepper("深さ \(viewModel.maxDepth)", value: $viewModel.maxDepth, in: 1...5)
+                    Stepper("最大 \(viewModel.maxNodes)", value: $viewModel.maxNodes, in: 30...120, step: 10)
+                }
             }
             .font(.subheadline)
         }
+        .cardSurface()
+    }
+
+    private var rootPicker: some View {
+        Picker("起点品種", selection: $viewModel.rootID) {
+            Text("全体").tag("")
+            ForEach(library.varieties) { variety in
+                Text(variety.name).tag(variety.id)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var directionPicker: some View {
+        Picker("表示方向", selection: $viewModel.direction) {
+            ForEach(PedigreeDirection.allCases) { direction in
+                Text(direction.label).tag(direction)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: .infinity)
     }
 
     private func edgeCanvas(nodes: [PedigreeNode], edges: [PedigreeEdge]) -> some View {
