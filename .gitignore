@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+DerivedData/
+Config/*.xcodeproj/
+*.xcworkspace/
+*.xcuserdata/
+*.ipa
+artifacts/
+Sources/Generated/SupabaseConfig.local.swift
