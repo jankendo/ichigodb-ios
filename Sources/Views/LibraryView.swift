@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct LibraryView: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
@@ -7,6 +8,7 @@ struct LibraryView: View {
     @ObservedObject var reviewVM: ReviewEditorViewModel
     @Binding var selectedTab: AppTab
     @State private var splitSelection: String?
+    @State private var compactPath: [String] = []
 
     var body: some View {
         Group {
@@ -38,7 +40,7 @@ struct LibraryView: View {
     }
 
     private var compactLayout: some View {
-        NavigationStack {
+        NavigationStack(path: $compactPath) {
             VStack(spacing: 0) {
                 header
                 compactList
@@ -232,9 +234,14 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
             } else {
                 ForEach(library.filteredVarieties) { variety in
-                    NavigationLink(value: variety.id) {
+                    Button {
+                        UIApplication.shared.dismissActiveKeyboard()
+                        compactPath.append(variety.id)
+                    } label: {
                         VarietyRow(variety: variety, selected: false)
                     }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 }
@@ -242,7 +249,6 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 
@@ -254,11 +260,13 @@ struct LibraryView: View {
             } else {
                 ForEach(library.filteredVarieties) { variety in
                     Button {
+                        UIApplication.shared.dismissActiveKeyboard()
                         splitSelection = variety.id
                     } label: {
                         VarietyRow(variety: variety, selected: splitSelection == variety.id)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
                 }
@@ -266,7 +274,6 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 
