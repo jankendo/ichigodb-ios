@@ -3,6 +3,10 @@ import SwiftUI
 struct PedigreeView: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     @ObservedObject var viewModel: PedigreeGraphViewModel
+    @ObservedObject var reviewVM: ReviewEditorViewModel
+    @Binding var selectedTab: AppTab
+    @GestureState private var dragOffset: CGSize = .zero
+    @GestureState private var pinchScale: CGFloat = 1
 
     var body: some View {
         NavigationStack {
@@ -13,12 +17,23 @@ struct PedigreeView: View {
 
                 GeometryReader { proxy in
                     let graph = viewModel.graph(varieties: library.varieties, links: library.parentLinks, canvasSize: proxy.size)
+                    let currentScale = viewModel.zoomScale * pinchScale
+                    let currentOffset = CGSize(
+                        width: viewModel.panOffset.width + dragOffset.width,
+                        height: viewModel.panOffset.height + dragOffset.height
+                    )
                     ZStack {
                         AppTheme.surface
-                        edgeCanvas(nodes: graph.nodes, edges: graph.edges)
-                        ForEach(graph.nodes) { node in
-                            nodeButton(node)
+                        ZStack {
+                            edgeCanvas(nodes: graph.nodes, edges: graph.edges)
+                            ForEach(graph.nodes) { node in
+                                nodeButton(node)
+                            }
                         }
+                        .scaleEffect(currentScale)
+                        .offset(currentOffset)
+                        .gesture(panGesture)
+                        .simultaneousGesture(zoomGesture)
                         if graph.nodes.isEmpty {
                             emptyState
                         }
@@ -41,10 +56,16 @@ struct PedigreeView: View {
     private var controls: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                MetricPill(title: "品種", value: "\(library.varieties.count)")
+                MetricPill(title: "品種", value: "\(library.activeVarieties.count)")
                 MetricPill(title: "リンク", value: "\(library.parentLinks.count)")
                 MetricPill(title: "表示", value: viewModel.direction.label)
             }
+
+            TextField("起点品種を検索", text: $viewModel.rootSearchText)
+                .textInputAutocapitalization(.never)
+                .padding(12)
+                .background(AppTheme.field, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
 
             ViewThatFits {
                 HStack(spacing: 10) {
@@ -68,19 +89,39 @@ struct PedigreeView: View {
                 }
             }
             .font(.subheadline)
+
+            HStack(spacing: 10) {
+                Button {
+                    viewModel.resetViewport()
+                } label: {
+                    Label("表示リセット", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                CapsuleBadge(text: String(format: "ズーム %.1fx", Double(viewModel.zoomScale)), tint: AppTheme.muted)
+            }
         }
         .cardSurface()
     }
 
     private var rootPicker: some View {
-        Picker("起点品種", selection: $viewModel.rootID) {
-            Text("全体").tag("")
-            ForEach(library.varieties) { variety in
-                Text(variety.name).tag(variety.id)
+        Menu {
+            Button("全体") {
+                viewModel.rootID = ""
+                viewModel.selectedNodeID = nil
+                viewModel.resetViewport()
             }
+            ForEach(filteredRootVarieties.prefix(80)) { variety in
+                Button(variety.name) {
+                    viewModel.rootID = variety.id
+                    viewModel.selectedNodeID = variety.id
+                    viewModel.resetViewport()
+                }
+            }
+        } label: {
+            Label(viewModel.rootID.isEmpty ? "起点: 全体" : "起点: \(library.varietyName(viewModel.rootID))", systemImage: "scope")
+                .frame(maxWidth: .infinity)
         }
-        .pickerStyle(.menu)
-        .frame(maxWidth: .infinity)
+        .buttonStyle(SecondaryButtonStyle())
     }
 
     private var directionPicker: some View {
@@ -143,6 +184,24 @@ struct PedigreeView: View {
                     CapsuleBadge(text: "ノード選択中", tint: AppTheme.strawberry)
                     Spacer()
                 }
+                HStack(spacing: 10) {
+                    Button {
+                        library.selectedVarietyID = id
+                        library.searchText = library.varietyName(id)
+                        selectedTab = .library
+                    } label: {
+                        Label("図鑑", systemImage: "book.pages")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    Button {
+                        reviewVM.reset(keeping: id)
+                        selectedTab = .reviewEditor
+                    } label: {
+                        Label("評価", systemImage: "star")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                }
             } else {
                 Text("ノードをタップすると品種情報を確認できます。")
                     .foregroundStyle(AppTheme.muted)
@@ -150,6 +209,38 @@ struct PedigreeView: View {
             ErrorBanner(message: viewModel.errorMessage)
         }
         .cardSurface()
+    }
+
+    private var filteredRootVarieties: [Variety] {
+        let normalized = viewModel.rootSearchText.normalizedSearchText
+        let rows = library.activeVarieties
+        guard !normalized.isEmpty else { return rows }
+        return rows.filter { variety in
+            ([variety.name, variety.japaneseName, variety.originPrefecture].compactMap { $0 } + variety.aliasNames)
+                .joined(separator: " ")
+                .normalizedSearchText
+                .contains(normalized)
+        }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture()
+            .updating($dragOffset) { value, state, _ in
+                state = value.translation
+            }
+            .onEnded { value in
+                viewModel.commitPan(value.translation)
+            }
+    }
+
+    private var zoomGesture: some Gesture {
+        MagnificationGesture()
+            .updating($pinchScale) { value, state, _ in
+                state = value
+            }
+            .onEnded { value in
+                viewModel.commitZoom(value)
+            }
     }
 
     private var emptyState: some View {

@@ -173,3 +173,69 @@ struct MessageBanner: View {
         }
     }
 }
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? 320
+        let rows = rows(maxWidth: maxWidth, subviews: subviews)
+        let height = rows.reduce(CGFloat.zero) { partial, row in
+            partial + row.height
+        } + CGFloat(max(rows.count - 1, 0)) * spacing
+        return CGSize(width: maxWidth, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = rows(maxWidth: bounds.width, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(item.size)
+                )
+                x += item.size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private func rows(maxWidth: CGFloat, subviews: Subviews) -> [FlowRow] {
+        var rows = [FlowRow]()
+        var current = FlowRow()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if current.width + size.width + (current.items.isEmpty ? 0 : spacing) > maxWidth, !current.items.isEmpty {
+                rows.append(current)
+                current = FlowRow()
+            }
+            current.append(FlowItem(index: index, size: size), spacing: spacing)
+        }
+        if !current.items.isEmpty {
+            rows.append(current)
+        }
+        return rows
+    }
+}
+
+private struct FlowItem {
+    var index: Int
+    var size: CGSize
+}
+
+private struct FlowRow {
+    var items = [FlowItem]()
+    var width: CGFloat = 0
+    var height: CGFloat = 0
+
+    mutating func append(_ item: FlowItem, spacing: CGFloat) {
+        if !items.isEmpty {
+            width += spacing
+        }
+        items.append(item)
+        width += item.size.width
+        height = max(height, item.size.height)
+    }
+}

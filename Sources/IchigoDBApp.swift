@@ -49,7 +49,7 @@ private struct ConfiguredRootView: View {
                 .tabItem { Label("評価", systemImage: "star.leadinghalf.filled") }
                 .tag(AppTab.reviewEditor)
 
-            PedigreeView(viewModel: pedigreeVM)
+            PedigreeView(viewModel: pedigreeVM, reviewVM: reviewVM, selectedTab: $selectedTab)
                 .tabItem { Label("交配図", systemImage: "point.3.connected.trianglepath.dotted") }
                 .tag(AppTab.pedigree)
         }

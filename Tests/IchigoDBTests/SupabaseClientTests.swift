@@ -26,4 +26,18 @@ final class SupabaseClientTests: XCTestCase {
         XCTAssertEqual(PostgrestFilter.isNull("deleted_at").value, "is.null")
         XCTAssertEqual(PostgrestFilter.in("id", ["a", "b"]).value, "in.(a,b)")
     }
+
+    func testBuildsEscapedStorageObjectRequest() throws {
+        let config = SupabaseConfig(url: URL(string: "https://example.supabase.co")!, anonKey: "anon")
+        let client = SupabaseClient(config: config)
+        let request = try client.storageObjectRequest(
+            bucket: "variety-images",
+            path: "varieties/a b/あまおう.jpg",
+            method: "GET"
+        )
+
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertTrue(request.url?.absoluteString.contains("storage/v1/object/variety-images/varieties/a%20b/") == true)
+        XCTAssertTrue(request.url?.absoluteString.contains(".jpg") == true)
+    }
 }

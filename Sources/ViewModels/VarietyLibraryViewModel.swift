@@ -10,6 +10,24 @@ enum DiscoveryFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum LibraryLens: String, CaseIterable, Identifiable {
+    case recent = "最近評価"
+    case topRated = "高評価"
+    case undiscovered = "未発見"
+    case all = "全品種"
+
+    var id: String { rawValue }
+}
+
+enum VarietySortOption: String, CaseIterable, Identifiable {
+    case name = "名前"
+    case latestReview = "最新評価"
+    case averageScore = "平均点"
+    case registeredYear = "登録年"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 final class VarietyLibraryViewModel: ObservableObject {
     @Published var varieties: [Variety] = []
@@ -20,13 +38,17 @@ final class VarietyLibraryViewModel: ObservableObject {
     @Published var signedImageURLs: [String: URL] = [:]
     @Published var loadedImages: [String: UIImage] = [:]
     @Published var searchText = ""
+    @Published var lens: LibraryLens = .recent
+    @Published var sortOption: VarietySortOption = .name
     @Published var discoveryFilter: DiscoveryFilter = .all
     @Published var prefectureFilter = ""
+    @Published var selectedTag = ""
     @Published var selectedVarietyID: String?
     @Published var isLoading = false
     @Published var errorMessage: String?
 
     private let repository: IchigoRepository
+    private let imageCache = ImageCacheStore()
 
     init(repository: IchigoRepository) {
         self.repository = repository
@@ -38,17 +60,44 @@ final class VarietyLibraryViewModel: ObservableObject {
         Set(reviews.filter { $0.deletedAt == nil }.map(\.varietyID))
     }
 
+    var activeVarieties: [Variety] {
+        varieties.filter { $0.deletedAt == nil }
+    }
+
+    var deletedVarieties: [Variety] {
+        varieties.filter { $0.deletedAt != nil }
+    }
+
+    var activeReviews: [Review] {
+        reviews.filter { $0.deletedAt == nil }
+    }
+
+    var deletedReviews: [Review] {
+        reviews.filter { $0.deletedAt != nil }
+    }
+
     var progressText: String {
-        let total = max(varieties.count, 1)
+        let total = max(activeVarieties.count, 1)
         let count = discoveredIDs.count
         return "\(count)/\(total)"
     }
 
+    var completionRate: Double {
+        guard !activeVarieties.isEmpty else { return 0 }
+        return Double(discoveredIDs.count) / Double(activeVarieties.count)
+    }
+
+    var availableTags: [String] {
+        Array(Set(activeVarieties.flatMap(\.tags))).sorted()
+    }
+
     var filteredVarieties: [Variety] {
         let normalized = searchText.normalizedSearchText
-        return varieties.filter { variety in
-            guard variety.deletedAt == nil else { return false }
+        let filtered = activeVarieties.filter { variety in
             if !prefectureFilter.isEmpty && variety.originPrefecture != prefectureFilter {
+                return false
+            }
+            if !selectedTag.isEmpty && !variety.tags.contains(selectedTag) {
                 return false
             }
             switch discoveryFilter {
@@ -62,14 +111,26 @@ final class VarietyLibraryViewModel: ObservableObject {
             guard !normalized.isEmpty else { return true }
             return variety.searchBlob.contains(normalized)
         }
+        let lensed: [Variety]
+        switch lens {
+        case .recent:
+            lensed = filtered.filter { latestReview(for: $0.id) != nil }
+        case .topRated:
+            lensed = filtered.filter { averageOverall(for: $0.id) != nil }
+        case .undiscovered:
+            lensed = filtered.filter { !discoveredIDs.contains($0.id) }
+        case .all:
+            lensed = filtered
+        }
+        return sorted(lensed)
     }
 
     func reload() async {
         isLoading = true
         errorMessage = nil
         do {
-            async let varietiesTask = repository.fetchVarieties()
-            async let reviewsTask = repository.fetchReviews()
+            async let varietiesTask = repository.fetchVarieties(includeDeleted: true)
+            async let reviewsTask = repository.fetchReviews(includeDeleted: true)
             async let linksTask = repository.fetchParentLinks()
             async let varietyImagesTask = repository.fetchVarietyImages()
             async let reviewImagesTask = repository.fetchReviewImages()
@@ -86,19 +147,19 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     func reviewCount(for varietyID: String) -> Int {
-        reviews.filter { $0.varietyID == varietyID && $0.deletedAt == nil }.count
+        activeReviews.filter { $0.varietyID == varietyID }.count
     }
 
     func latestReview(for varietyID: String) -> Review? {
-        reviews
-            .filter { $0.varietyID == varietyID && $0.deletedAt == nil }
+        activeReviews
+            .filter { $0.varietyID == varietyID }
             .sorted { $0.tastedDate > $1.tastedDate }
             .first
     }
 
     func reviews(for varietyID: String) -> [Review] {
-        reviews
-            .filter { $0.varietyID == varietyID && $0.deletedAt == nil }
+        activeReviews
+            .filter { $0.varietyID == varietyID }
             .sorted { $0.tastedDate > $1.tastedDate }
     }
 
@@ -122,16 +183,43 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     func primaryImage(for varietyID: String) -> VarietyImage? {
-        let images = varietyImages.filter { $0.varietyID == varietyID }
+        let images = images(for: varietyID)
         return images.first(where: \.isPrimary) ?? images.first
     }
 
     func images(for varietyID: String) -> [VarietyImage] {
-        varietyImages.filter { $0.varietyID == varietyID }
+        varietyImages
+            .filter { $0.varietyID == varietyID }
+            .sorted {
+                if $0.isPrimary != $1.isPrimary {
+                    return $0.isPrimary && !$1.isPrimary
+                }
+                return ($0.createdAt ?? "") < ($1.createdAt ?? "")
+            }
     }
 
     func reviewImages(for reviewID: String) -> [ReviewImage] {
-        reviewImages.filter { $0.reviewID == reviewID }
+        reviewImages
+            .filter { $0.reviewID == reviewID }
+            .sorted { ($0.createdAt ?? "") < ($1.createdAt ?? "") }
+    }
+
+    func parents(for varietyID: String) -> [Variety] {
+        let ids = parentLinks
+            .filter { $0.childVarietyID == varietyID }
+            .sorted { ($0.parentOrder ?? 0) < ($1.parentOrder ?? 0) }
+            .map(\.parentVarietyID)
+        return ids.compactMap { id in varieties.first(where: { $0.id == id }) }
+    }
+
+    func children(for varietyID: String) -> [Variety] {
+        let ids = parentLinks
+            .filter { $0.parentVarietyID == varietyID }
+            .map(\.childVarietyID)
+        let order = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($0.element, $0.offset) })
+        return varieties
+            .filter { order[$0.id] != nil && $0.deletedAt == nil }
+            .sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
     }
 
     func varietyName(_ id: String) -> String {
@@ -169,11 +257,23 @@ final class VarietyLibraryViewModel: ObservableObject {
     func ensureImage(bucket: String, path: String) async {
         let key = cacheKey(bucket: bucket, path: path)
         guard loadedImages[key] == nil else { return }
+        if let cached = imageCache.image(bucket: bucket, path: path) {
+            loadedImages[key] = cached
+            return
+        }
         do {
-            loadedImages[key] = try await repository.downloadImage(bucket: bucket, path: path)
+            let data = try await repository.downloadImageData(bucket: bucket, path: path)
+            loadedImages[key] = imageCache.store(data, bucket: bucket, path: path)
         } catch {
             await ensureSignedURL(bucket: bucket, path: path)
         }
+    }
+
+    func clearCachedImage(bucket: String, path: String) {
+        let key = cacheKey(bucket: bucket, path: path)
+        loadedImages[key] = nil
+        signedImageURLs[key] = nil
+        imageCache.remove(bucket: bucket, path: path)
     }
 
     func deleteVariety(_ id: String) async {
@@ -186,7 +286,7 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     private func preloadPrimaryImageURLs() async {
-        let firstImages = varieties.compactMap { primaryImage(for: $0.id) }.prefix(40)
+        let firstImages = activeVarieties.compactMap { primaryImage(for: $0.id) }.prefix(80)
         for image in firstImages {
             await ensureImage(bucket: "variety-images", path: image.storagePath)
         }
@@ -194,6 +294,28 @@ final class VarietyLibraryViewModel: ObservableObject {
 
     private func cacheKey(bucket: String, path: String) -> String {
         "\(bucket)/\(path)"
+    }
+
+    private func sorted(_ rows: [Variety]) -> [Variety] {
+        switch lens {
+        case .recent:
+            return rows.sorted { (latestReview(for: $0.id)?.tastedDate ?? "") > (latestReview(for: $1.id)?.tastedDate ?? "") }
+        case .topRated:
+            return rows.sorted { (averageOverall(for: $0.id) ?? 0) > (averageOverall(for: $1.id) ?? 0) }
+        case .undiscovered:
+            return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        case .all:
+            switch sortOption {
+            case .name:
+                return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            case .latestReview:
+                return rows.sorted { (latestReview(for: $0.id)?.tastedDate ?? "") > (latestReview(for: $1.id)?.tastedDate ?? "") }
+            case .averageScore:
+                return rows.sorted { (averageOverall(for: $0.id) ?? -1) > (averageOverall(for: $1.id) ?? -1) }
+            case .registeredYear:
+                return rows.sorted { ($0.registeredYear ?? 0) > ($1.registeredYear ?? 0) }
+            }
+        }
     }
 }
 

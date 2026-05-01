@@ -5,6 +5,9 @@ struct VarietyEditorView: View {
     @ObservedObject var viewModel: VarietyEditorViewModel
     @State private var selectedEditID = ""
     @State private var showAdvanced = false
+    @State private var showParentSelector = false
+    @State private var selectedRestoreID = ""
+    @State private var deleteConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -25,7 +28,7 @@ struct VarietyEditorView: View {
                 Section("編集対象") {
                     Picker("品種", selection: $selectedEditID) {
                         Text("新規登録").tag("")
-                        ForEach(library.varieties) { variety in
+                        ForEach(library.activeVarieties) { variety in
                             Text(variety.name).tag(variety.id)
                         }
                     }
@@ -44,31 +47,22 @@ struct VarietyEditorView: View {
                         .textInputAutocapitalization(.never)
                         .font(.title3.weight(.semibold))
 
+                    TextField("別名（カンマ区切り）", text: $viewModel.draft.aliasNamesText)
+
                     Picker("都道府県", selection: $viewModel.draft.originPrefecture) {
                         Text("未設定").tag("")
                         ForEach(Prefecture.all, id: \.self) { Text($0).tag($0) }
                     }
                     .pickerStyle(.menu)
 
-                    Picker("親品種 1", selection: parentBinding(0)) {
-                        Text("未設定").tag("")
-                        ForEach(parentCandidates) { variety in
-                            Text(variety.name).tag(variety.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
-                    Picker("親品種 2", selection: parentBinding(1)) {
-                        Text("未設定").tag("")
-                        ForEach(parentCandidates) { variety in
-                            Text(variety.name).tag(variety.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
+                    parentSummary
                 }
 
                 Section("画像") {
                     PhotoSelectionStrip(images: $viewModel.selectedImages, maxCount: 5)
+                    if viewModel.isEditing, let id = viewModel.draft.id {
+                        ExistingVarietyImages(varietyID: id, viewModel: viewModel)
+                    }
                 }
 
                 Section {
@@ -90,6 +84,39 @@ struct VarietyEditorView: View {
                     MessageBanner(message: viewModel.message)
                     ErrorBanner(message: viewModel.errorMessage)
                 }
+
+                if viewModel.isEditing {
+                    Section("管理") {
+                        Button(role: .destructive) {
+                            deleteConfirmation = true
+                        } label: {
+                            Label("この品種を削除", systemImage: "trash")
+                        }
+                    }
+                }
+
+                if !library.deletedVarieties.isEmpty {
+                    Section("削除済みを復元") {
+                        Picker("復元対象", selection: $selectedRestoreID) {
+                            Text("選択してください").tag("")
+                            ForEach(library.deletedVarieties) { variety in
+                                Text(variety.name).tag(variety.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        Button {
+                            Task {
+                                if await viewModel.restore(id: selectedRestoreID) {
+                                    selectedRestoreID = ""
+                                    await library.reload()
+                                }
+                            }
+                        } label: {
+                            Label("復元", systemImage: "arrow.uturn.backward")
+                        }
+                        .disabled(selectedRestoreID.isEmpty)
+                    }
+                }
             }
             .navigationTitle(viewModel.isEditing ? "品種編集" : "品種登録")
             .navigationBarTitleDisplayMode(.large)
@@ -106,6 +133,25 @@ struct VarietyEditorView: View {
             }
             .onAppear {
                 selectedEditID = viewModel.draft.id ?? ""
+            }
+            .sheet(isPresented: $showParentSelector) {
+                ParentSelectionSheet(
+                    candidates: parentCandidates,
+                    selectedIDs: $viewModel.draft.parentIDs
+                )
+            }
+            .confirmationDialog("この品種を削除しますか？", isPresented: $deleteConfirmation, titleVisibility: .visible) {
+                Button("削除", role: .destructive) {
+                    Task {
+                        if await viewModel.softDeleteCurrent() {
+                            selectedEditID = ""
+                            await library.reload()
+                        }
+                    }
+                }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("削除後も復元できます。")
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
@@ -171,18 +217,154 @@ struct VarietyEditorView: View {
     }
 
     private var parentCandidates: [Variety] {
-        library.varieties.filter { $0.id != (viewModel.draft.id ?? "") }
+        library.activeVarieties.filter { $0.id != (viewModel.draft.id ?? "") }
     }
 
-    private func parentBinding(_ index: Int) -> Binding<String> {
-        Binding {
-            guard viewModel.draft.parentIDs.indices.contains(index) else { return "" }
-            return viewModel.draft.parentIDs[index]
-        } set: { newValue in
-            while viewModel.draft.parentIDs.count <= index {
-                viewModel.draft.parentIDs.append("")
+    private var parentSummary: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                showParentSelector = true
+            } label: {
+                Label("親品種を選ぶ", systemImage: "point.3.connected.trianglepath.dotted")
             }
-            viewModel.draft.parentIDs[index] = newValue
+            .buttonStyle(SecondaryButtonStyle())
+
+            if viewModel.draft.parentIDs.filter({ !$0.isEmpty }).isEmpty {
+                Text("親品種は未設定です。")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+            } else {
+                FlowLayout(spacing: 8) {
+                    ForEach(viewModel.draft.parentIDs.filter { !$0.isEmpty }, id: \.self) { id in
+                        CapsuleBadge(text: library.varietyName(id), tint: AppTheme.leaf)
+                    }
+                }
+            }
         }
+    }
+}
+
+private struct ParentSelectionSheet: View {
+    var candidates: [Variety]
+    @Binding var selectedIDs: [String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(filteredCandidates) { variety in
+                    Button {
+                        toggle(variety.id)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(variety.name)
+                                    .foregroundStyle(AppTheme.ink)
+                                if let prefecture = variety.originPrefecture {
+                                    Text(prefecture)
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.muted)
+                                }
+                            }
+                            Spacer()
+                            if selectedIDs.contains(variety.id) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(AppTheme.strawberry)
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $searchText, prompt: "親品種を検索")
+            .navigationTitle("親品種")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { dismiss() }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("クリア") { selectedIDs = [] }
+                }
+            }
+        }
+    }
+
+    private var filteredCandidates: [Variety] {
+        let normalized = searchText.normalizedSearchText
+        guard !normalized.isEmpty else { return candidates }
+        return candidates.filter { variety in
+            ([variety.name, variety.japaneseName, variety.originPrefecture].compactMap { $0 } + variety.aliasNames)
+                .joined(separator: " ")
+                .normalizedSearchText
+                .contains(normalized)
+        }
+    }
+
+    private func toggle(_ id: String) {
+        if selectedIDs.contains(id) {
+            selectedIDs.removeAll { $0 == id }
+        } else {
+            selectedIDs.append(id)
+        }
+    }
+}
+
+private struct ExistingVarietyImages: View {
+    @EnvironmentObject private var library: VarietyLibraryViewModel
+    var varietyID: String
+    @ObservedObject var viewModel: VarietyEditorViewModel
+
+    var body: some View {
+        if !images.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("登録済み画像")
+                    .font(.headline)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(images) { image in
+                            VStack(spacing: 8) {
+                                AsyncVarietyImage(
+                                    image: library.loadedImage(bucket: "variety-images", path: image.storagePath),
+                                    url: library.imageURL(bucket: "variety-images", path: image.storagePath),
+                                    height: 96
+                                )
+                                .frame(width: 116)
+                                .task {
+                                    await library.ensureImage(bucket: "variety-images", path: image.storagePath)
+                                }
+                                if image.isPrimary {
+                                    CapsuleBadge(text: "メイン", tint: AppTheme.strawberry)
+                                } else {
+                                    Button("メイン") {
+                                        Task {
+                                            if await viewModel.setPrimaryImage(varietyID: varietyID, imageID: image.id) {
+                                                await library.reload()
+                                            }
+                                        }
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                }
+                                Button(role: .destructive) {
+                                    Task {
+                                        if await viewModel.deleteImage(image) {
+                                            library.clearCachedImage(bucket: "variety-images", path: image.storagePath)
+                                            await library.reload()
+                                        }
+                                    }
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                        .font(.caption)
+                                }
+                            }
+                            .frame(width: 116)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var images: [VarietyImage] {
+        library.images(for: varietyID)
     }
 }

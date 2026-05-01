@@ -8,7 +8,26 @@ final class PedigreeGraphViewModel: ObservableObject {
     @Published var maxDepth = 3
     @Published var maxNodes = 80
     @Published var selectedNodeID: String?
+    @Published var rootSearchText = ""
+    @Published var zoomScale: CGFloat = 1
+    @Published var panOffset: CGSize = .zero
     @Published var errorMessage: String?
+
+    func resetViewport() {
+        zoomScale = 1
+        panOffset = .zero
+    }
+
+    func commitPan(_ translation: CGSize) {
+        panOffset = CGSize(
+            width: panOffset.width + translation.width,
+            height: panOffset.height + translation.height
+        )
+    }
+
+    func commitZoom(_ scale: CGFloat) {
+        zoomScale = min(2.8, max(0.55, zoomScale * scale))
+    }
 
     func graph(
         varieties: [Variety],

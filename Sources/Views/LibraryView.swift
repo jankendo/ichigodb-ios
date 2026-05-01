@@ -17,8 +17,16 @@ struct LibraryView: View {
             }
         }
         .task {
+            if let selectedID = library.selectedVarietyID {
+                splitSelection = selectedID
+            }
             if splitSelection == nil {
                 splitSelection = library.filteredVarieties.first?.id
+            }
+        }
+        .onChange(of: library.selectedVarietyID) { id in
+            if let id {
+                splitSelection = id
             }
         }
         .onChange(of: library.filteredVarieties.map(\.id)) { ids in
@@ -85,28 +93,30 @@ struct LibraryView: View {
 
             HStack(spacing: 10) {
                 MetricPill(title: "図鑑進捗", value: library.progressText)
-                MetricPill(title: "登録品種", value: "\(library.varieties.count)")
-                MetricPill(title: "評価", value: "\(library.reviews.count)")
+                MetricPill(title: "登録品種", value: "\(library.activeVarieties.count)")
+                MetricPill(title: "評価", value: "\(library.activeReviews.count)")
             }
+            ProgressView(value: library.completionRate)
+                .tint(AppTheme.strawberry)
 
             VStack(spacing: 10) {
-                Picker("状態", selection: $library.discoveryFilter) {
-                    ForEach(DiscoveryFilter.allCases) { filter in
-                        Text(filter.rawValue).tag(filter)
+                Picker("表示", selection: $library.lens) {
+                    ForEach(LibraryLens.allCases) { lens in
+                        Text(lens.rawValue).tag(lens)
                     }
                 }
                 .pickerStyle(.segmented)
 
-                Menu {
-                    Button("すべて") { library.prefectureFilter = "" }
-                    ForEach(Prefecture.all, id: \.self) { prefecture in
-                        Button(prefecture) { library.prefectureFilter = prefecture }
+                ViewThatFits {
+                    HStack(spacing: 10) {
+                        filterMenu
+                        sortMenu
                     }
-                } label: {
-                    Label(library.prefectureFilter.isEmpty ? "都道府県: すべて" : library.prefectureFilter, systemImage: "line.3.horizontal.decrease.circle")
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 10) {
+                        filterMenu
+                        sortMenu
+                    }
                 }
-                .buttonStyle(SecondaryButtonStyle())
 
                 HStack(spacing: 10) {
                     Button {
@@ -133,6 +143,57 @@ struct LibraryView: View {
         .padding(.top, 12)
         .padding(.bottom, 10)
         .background(AppTheme.surface)
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Section("発見状態") {
+                ForEach(DiscoveryFilter.allCases) { filter in
+                    Button(filter.rawValue) { library.discoveryFilter = filter }
+                }
+            }
+            Section("都道府県") {
+                Button("すべて") { library.prefectureFilter = "" }
+                ForEach(Prefecture.all, id: \.self) { prefecture in
+                    Button(prefecture) { library.prefectureFilter = prefecture }
+                }
+            }
+            if !library.availableTags.isEmpty {
+                Section("タグ") {
+                    Button("すべて") { library.selectedTag = "" }
+                    ForEach(library.availableTags, id: \.self) { tag in
+                        Button(tag) { library.selectedTag = tag }
+                    }
+                }
+            }
+        } label: {
+            Label(filterSummary, systemImage: "line.3.horizontal.decrease.circle")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SecondaryButtonStyle())
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(VarietySortOption.allCases) { option in
+                Button(option.rawValue) { library.sortOption = option }
+            }
+        } label: {
+            Label("並び: \(library.lens == .all ? library.sortOption.rawValue : library.lens.rawValue)", systemImage: "arrow.up.arrow.down")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(SecondaryButtonStyle())
+    }
+
+    private var filterSummary: String {
+        var parts = [library.discoveryFilter.rawValue]
+        if !library.prefectureFilter.isEmpty {
+            parts.append(library.prefectureFilter)
+        }
+        if !library.selectedTag.isEmpty {
+            parts.append("#\(library.selectedTag)")
+        }
+        return parts.joined(separator: " / ")
     }
 
     private var compactList: some View {
@@ -352,6 +413,46 @@ private struct ReviewHistoryRow: View {
     }
 }
 
+private struct VarietyImageGallery: View {
+    @EnvironmentObject private var library: VarietyLibraryViewModel
+    var varietyID: String
+    var height: CGFloat
+
+    var body: some View {
+        Group {
+            if images.isEmpty {
+                AsyncVarietyImage(height: height)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(images) { image in
+                            ZStack(alignment: .topLeading) {
+                                AsyncVarietyImage(
+                                    image: library.loadedImage(bucket: "variety-images", path: image.storagePath),
+                                    url: library.imageURL(bucket: "variety-images", path: image.storagePath),
+                                    height: height
+                                )
+                                .frame(width: min(520, max(260, height * 1.28)))
+                                .task {
+                                    await library.ensureImage(bucket: "variety-images", path: image.storagePath)
+                                }
+                                if image.isPrimary {
+                                    CapsuleBadge(text: "メイン", tint: AppTheme.strawberry)
+                                        .padding(10)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var images: [VarietyImage] {
+        library.images(for: varietyID)
+    }
+}
+
 struct VarietyDetailView: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -362,16 +463,7 @@ struct VarietyDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                AsyncVarietyImage(
-                    image: library.loadedImage(bucket: "variety-images", path: library.primaryImage(for: variety.id)?.storagePath),
-                    url: library.imageURL(for: library.primaryImage(for: variety.id)),
-                    height: horizontalSizeClass == .regular ? 320 : 230
-                )
-                    .task {
-                        if let image = library.primaryImage(for: variety.id) {
-                            await library.ensureImage(bucket: "variety-images", path: image.storagePath)
-                        }
-                    }
+                VarietyImageGallery(varietyID: variety.id, height: horizontalSizeClass == .regular ? 320 : 230)
 
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -402,6 +494,8 @@ struct VarietyDetailView: View {
                 }
 
                 detailRows
+
+                relationRows
 
                 reviewTimeline
             }
@@ -434,6 +528,7 @@ struct VarietyDetailView: View {
                 .font(.headline)
             labeled("登録番号", variety.registrationNumber)
             labeled("出願番号", variety.applicationNumber)
+            labeled("別名", variety.aliasNames.isEmpty ? nil : variety.aliasNames.joined(separator: ", "))
             labeled("育成者", variety.developer)
             labeled("登録年", variety.registeredYear.map(String.init))
             labeled("果皮色", variety.skinColor)
@@ -441,6 +536,43 @@ struct VarietyDetailView: View {
             labeled("タグ", variety.tags.isEmpty ? nil : variety.tags.joined(separator: ", "))
         }
         .cardSurface()
+    }
+
+    private var relationRows: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("交配リンク")
+                .font(.headline)
+            relationGroup(title: "親品種", rows: library.parents(for: variety.id))
+            relationGroup(title: "子品種", rows: library.children(for: variety.id))
+        }
+        .cardSurface()
+    }
+
+    private func relationGroup(title: String, rows: [Variety]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.muted)
+            if rows.isEmpty {
+                Text("未登録")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(rows) { row in
+                            Button {
+                                library.selectedVarietyID = row.id
+                                library.searchText = row.name
+                            } label: {
+                                CapsuleBadge(text: row.name, tint: AppTheme.leaf)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var reviewSummary: some View {

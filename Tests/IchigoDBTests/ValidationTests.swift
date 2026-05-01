@@ -19,4 +19,23 @@ final class ValidationTests: XCTestCase {
         draft.appearance = 4
         XCTAssertEqual(draft.overall, 9)
     }
+
+    func testVarietyDraftParsesAliasNames() {
+        var draft = VarietyDraft()
+        draft.aliasNamesText = "あまおう, 甘王、 Amaou"
+
+        XCTAssertEqual(draft.aliasNames, ["あまおう", "甘王", "Amaou"])
+    }
+
+    func testReviewDraftCodableRoundTrip() throws {
+        var draft = ReviewDraft()
+        draft.varietyID = "v1"
+        draft.comment = "よい香り"
+
+        let data = try JSONEncoder().encode(draft)
+        let restored = try JSONDecoder().decode(ReviewDraft.self, from: data)
+
+        XCTAssertEqual(restored.varietyID, "v1")
+        XCTAssertEqual(restored.comment, "よい香り")
+    }
 }

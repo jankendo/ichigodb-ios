@@ -21,6 +21,7 @@ enum RepositoryError: LocalizedError, Equatable {
 struct VarietyDraft: Equatable {
     var id: String?
     var name = ""
+    var aliasNamesText = ""
     var originPrefecture = ""
     var developer = ""
     var registeredYear: Int?
@@ -43,6 +44,7 @@ struct VarietyDraft: Equatable {
     init(variety: Variety, parentLinks: [VarietyParentLink]) {
         id = variety.id
         name = variety.name
+        aliasNamesText = variety.aliasNames.joined(separator: ", ")
         originPrefecture = variety.originPrefecture ?? ""
         developer = variety.developer ?? ""
         registeredYear = variety.registeredYear
@@ -70,9 +72,16 @@ struct VarietyDraft: Equatable {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
     }
+
+    var aliasNames: [String] {
+        aliasNamesText
+            .split { $0 == "," || $0 == "、" || $0 == "\n" }
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
 }
 
-struct ReviewDraft: Equatable {
+struct ReviewDraft: Codable, Equatable {
     var varietyID = ""
     var tastedDate = Date()
     var sweetness = 3
@@ -102,15 +111,19 @@ final class IchigoRepository {
     func fetchVarieties(includeDeleted: Bool = false) async throws -> [Variety] {
         var filters = [PostgrestFilter]()
         if !includeDeleted { filters.append(.isNull("deleted_at")) }
-        let rows = try await client.select(
+        let rows = try await client.selectAll(
             Variety.self,
             table: "varieties",
             columns: "*",
             filters: filters,
             order: "name.asc",
-            range: 0...4999
+            pageSize: 1000,
+            maxRows: 20000
         )
         cache.save(rows, for: includeDeleted ? "varieties_all" : "varieties_active")
+        if includeDeleted {
+            cache.save(rows.filter { $0.deletedAt == nil }, for: "varieties_active")
+        }
         return rows
     }
 
@@ -121,15 +134,19 @@ final class IchigoRepository {
     func fetchReviews(includeDeleted: Bool = false) async throws -> [Review] {
         var filters = [PostgrestFilter]()
         if !includeDeleted { filters.append(.isNull("deleted_at")) }
-        let rows = try await client.select(
+        let rows = try await client.selectAll(
             Review.self,
             table: "reviews",
             columns: "*",
             filters: filters,
             order: "tasted_date.desc",
-            range: 0...4999
+            pageSize: 1000,
+            maxRows: 20000
         )
         cache.save(rows, for: includeDeleted ? "reviews_all" : "reviews_active")
+        if includeDeleted {
+            cache.save(rows.filter { $0.deletedAt == nil }, for: "reviews_active")
+        }
         return rows
     }
 
@@ -138,15 +155,15 @@ final class IchigoRepository {
     }
 
     func fetchParentLinks() async throws -> [VarietyParentLink] {
-        try await client.select(VarietyParentLink.self, table: "variety_parent_links", columns: "*", order: "parent_order.asc", range: 0...9999)
+        try await client.selectAll(VarietyParentLink.self, table: "variety_parent_links", columns: "*", order: "parent_order.asc")
     }
 
     func fetchVarietyImages() async throws -> [VarietyImage] {
-        try await client.select(VarietyImage.self, table: "variety_images", columns: "*", order: "created_at.desc", range: 0...9999)
+        try await client.selectAll(VarietyImage.self, table: "variety_images", columns: "*", order: "created_at.desc")
     }
 
     func fetchReviewImages() async throws -> [ReviewImage] {
-        try await client.select(ReviewImage.self, table: "review_images", columns: "*", order: "created_at.desc", range: 0...9999)
+        try await client.selectAll(ReviewImage.self, table: "review_images", columns: "*", order: "created_at.desc")
     }
 
     func createOrUpdateVariety(_ draft: VarietyDraft, images: [UIImage] = []) async throws -> Variety {
@@ -154,6 +171,7 @@ final class IchigoRepository {
         try Validation.validateBrix(min: draft.brixMin, max: draft.brixMax)
         let payload: [String: Any] = [
             "name": name,
+            "alias_names": Array(draft.aliasNames.prefix(20)),
             "origin_prefecture": nullOrString(draft.originPrefecture),
             "developer": nullOrString(draft.developer),
             "registered_year": nullable(try Validation.validateYear(draft.registeredYear)),
@@ -199,6 +217,47 @@ final class IchigoRepository {
 
     func restoreVariety(id: String) async throws {
         _ = try await client.restore(Variety.self, table: "varieties", id: id)
+    }
+
+    func setPrimaryVarietyImage(varietyID: String, imageID: String) async throws {
+        _ = try await client.updateJSON(
+            VarietyImage.self,
+            table: "variety_images",
+            payload: ["is_primary": false],
+            filters: [.eq("variety_id", varietyID)],
+            returning: false
+        )
+        _ = try await client.updateJSON(
+            VarietyImage.self,
+            table: "variety_images",
+            payload: ["is_primary": true],
+            filters: [.eq("id", imageID), .eq("variety_id", varietyID)],
+            returning: false
+        )
+    }
+
+    func deleteVarietyImage(id: String) async throws {
+        let rows = try await client.select(VarietyImage.self, table: "variety_images", filters: [.eq("id", id)], range: 0...0)
+        guard let image = rows.first else { return }
+        try? await client.deleteObject(bucket: "variety-images", path: image.storagePath)
+        try await client.deleteRows(table: "variety_images", filters: [.eq("id", id)])
+        let remaining = try await client.select(
+            VarietyImage.self,
+            table: "variety_images",
+            filters: [.eq("variety_id", image.varietyID)],
+            order: "created_at.asc",
+            range: 0...4
+        )
+        if remaining.first(where: \.isPrimary) == nil, let first = remaining.first {
+            try await setPrimaryVarietyImage(varietyID: image.varietyID, imageID: first.id)
+        }
+    }
+
+    func deleteReviewImage(id: String) async throws {
+        let rows = try await client.select(ReviewImage.self, table: "review_images", filters: [.eq("id", id)], range: 0...0)
+        guard let image = rows.first else { return }
+        try? await client.deleteObject(bucket: "review-images", path: image.storagePath)
+        try await client.deleteRows(table: "review_images", filters: [.eq("id", id)])
     }
 
     func replaceParentLinks(childID: String, parentIDs: [String]) async throws {
@@ -274,6 +333,7 @@ final class IchigoRepository {
             throw RepositoryError.imagePreparationFailed
         }
         let path = "varieties/\(varietyID)/\(UUID().uuidString.lowercased()).jpg"
+        let existing = try await client.select(VarietyImage.self, table: "variety_images", filters: [.eq("variety_id", varietyID)], range: 0...0)
         try await client.uploadObject(bucket: "variety-images", path: path, data: prepared.data, contentType: prepared.mimeType)
         let payload: [String: Any] = [
             "id": UUID().uuidString.lowercased(),
@@ -284,7 +344,7 @@ final class IchigoRepository {
             "file_size_bytes": prepared.data.count,
             "width": prepared.width,
             "height": prepared.height,
-            "is_primary": false
+            "is_primary": existing.isEmpty
         ]
         let rows = try await client.insertJSON(VarietyImage.self, table: "variety_images", payload: payload)
         guard let first = rows.first else { throw RepositoryError.missingCreatedRow }
@@ -314,6 +374,10 @@ final class IchigoRepository {
 
     func signedURL(bucket: String, path: String) async throws -> URL {
         try await client.signedURL(bucket: bucket, path: path)
+    }
+
+    func downloadImageData(bucket: String, path: String) async throws -> Data {
+        try await client.downloadObject(bucket: bucket, path: path)
     }
 
     func downloadImage(bucket: String, path: String) async throws -> UIImage {
