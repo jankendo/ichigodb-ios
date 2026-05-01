@@ -292,10 +292,11 @@ private struct ReviewHistoryCard: View {
                             AsyncVarietyImage(
                                 image: library.loadedImage(bucket: "review-images", path: image.storagePath),
                                 url: library.imageURL(bucket: "review-images", path: image.storagePath),
-                                height: 72
+                                height: 72,
+                                contentMode: .fit
                             )
                             .frame(width: 72)
-                            .task {
+                            .task(id: image.storagePath) {
                                 await library.ensureImage(bucket: "review-images", path: image.storagePath)
                             }
                         }

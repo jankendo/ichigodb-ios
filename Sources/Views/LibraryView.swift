@@ -44,7 +44,8 @@ struct LibraryView: View {
                 compactList
             }
             .navigationTitle("品種図鑑")
-            .searchable(text: $library.searchText, prompt: "品種名・登録番号・特徴で検索")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $library.searchText, prompt: "品種名・特徴")
             .toolbar { refreshToolbar }
             .overlay { loadingOverlay }
             .navigationDestination(for: Variety.self) { variety in
@@ -60,6 +61,7 @@ struct LibraryView: View {
                 splitList
             }
             .navigationTitle("品種図鑑")
+            .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $library.searchText, prompt: "検索")
             .toolbar { refreshToolbar }
             .overlay { loadingOverlay }
@@ -84,64 +86,72 @@ struct LibraryView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 12) {
-            AppScreenHeader(
-                title: "IchigoDB",
-                subtitle: "品種・画像・評価をすばやく確認",
-                systemImage: "sparkle.magnifyingglass"
-            )
-
+        VStack(spacing: 9) {
             HStack(spacing: 10) {
-                MetricPill(title: "図鑑進捗", value: library.progressText)
-                MetricPill(title: "登録品種", value: "\(library.activeVarieties.count)")
-                MetricPill(title: "評価", value: "\(library.activeReviews.count)")
-            }
-            ProgressView(value: library.completionRate)
-                .tint(AppTheme.strawberry)
+                BrandMark(size: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("品種図鑑")
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.ink)
+                    Text("\(library.filteredVarieties.count)件 / \(library.activeVarieties.count)品種 / 進捗 \(library.progressText)")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+                Spacer(minLength: 6)
+                Button {
+                    editorVM.reset()
+                    selectedTab = .varietyEditor
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(IconBadgeButtonStyle(tint: AppTheme.strawberry))
+                .accessibilityLabel("品種を登録")
 
-            VStack(spacing: 10) {
-                Picker("表示", selection: $library.lens) {
+                Button {
+                    reviewVM.reset()
+                    selectedTab = .reviewEditor
+                } label: {
+                    Image(systemName: "star.fill")
+                }
+                .buttonStyle(IconBadgeButtonStyle(tint: AppTheme.gold))
+                .accessibilityLabel("評価を追加")
+            }
+
+            ProgressStrip(value: library.completionRate)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
                     ForEach(LibraryLens.allCases) { lens in
-                        Text(lens.rawValue).tag(lens)
+                        LensChip(
+                            title: lens.rawValue,
+                            systemImage: lens.systemImage,
+                            selected: library.lens == lens
+                        ) {
+                            library.lens = lens
+                        }
                     }
                 }
-                .pickerStyle(.segmented)
-
-                ViewThatFits {
-                    HStack(spacing: 10) {
-                        filterMenu
-                        sortMenu
-                    }
-                    VStack(spacing: 10) {
-                        filterMenu
-                        sortMenu
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        editorVM.reset()
-                        selectedTab = .varietyEditor
-                    } label: {
-                        Label("新規登録", systemImage: "plus")
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-
-                    Button {
-                        reviewVM.reset()
-                        selectedTab = .reviewEditor
-                    } label: {
-                        Label("評価追加", systemImage: "star")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                }
-
-                ErrorBanner(message: library.errorMessage)
+                .padding(.horizontal, 1)
             }
+
+            ViewThatFits {
+                HStack(spacing: 8) {
+                    filterMenu
+                    sortMenu
+                }
+                VStack(spacing: 8) {
+                    filterMenu
+                    sortMenu
+                }
+            }
+
+            ErrorBanner(message: library.errorMessage)
         }
-        .padding(.horizontal)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 14)
+        .padding(.top, 7)
+        .padding(.bottom, 8)
         .background(AppTheme.surface)
     }
 
@@ -170,7 +180,7 @@ struct LibraryView: View {
             Label(filterSummary, systemImage: "line.3.horizontal.decrease.circle")
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(CompactControlButtonStyle())
     }
 
     private var sortMenu: some View {
@@ -179,10 +189,10 @@ struct LibraryView: View {
                 Button(option.rawValue) { library.sortOption = option }
             }
         } label: {
-            Label("並び: \(library.lens == .all ? library.sortOption.rawValue : library.lens.rawValue)", systemImage: "arrow.up.arrow.down")
+            Label("並び: \(sortSummary)", systemImage: "arrow.up.arrow.down")
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(CompactControlButtonStyle())
     }
 
     private var filterSummary: String {
@@ -194,6 +204,19 @@ struct LibraryView: View {
             parts.append("#\(library.selectedTag)")
         }
         return parts.joined(separator: " / ")
+    }
+
+    private var sortSummary: String {
+        switch library.lens {
+        case .all:
+            return library.sortOption.rawValue
+        case .discovered, .recent:
+            return "最新評価"
+        case .topRated:
+            return "平均点"
+        case .undiscovered:
+            return "名前"
+        }
     }
 
     private var compactList: some View {
@@ -290,24 +313,26 @@ private struct VarietyRow: View {
     var selected: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             AsyncVarietyImage(
-                image: library.loadedImage(bucket: "variety-images", path: library.primaryImage(for: variety.id)?.storagePath),
-                url: library.imageURL(for: library.primaryImage(for: variety.id)),
-                height: 92
+                image: library.loadedImage(bucket: "variety-images", path: primaryImage?.storagePath),
+                url: library.imageURL(for: primaryImage),
+                height: 84,
+                contentMode: .fit
             )
-                .frame(width: 92)
-                .task {
-                    if let image = library.primaryImage(for: variety.id) {
-                        await library.ensureImage(bucket: "variety-images", path: image.storagePath)
-                    }
+                .frame(width: 84)
+                .task(id: primaryImage?.storagePath) {
+                    guard let primaryImage else { return }
+                    await library.ensureImage(bucket: "variety-images", path: primaryImage.storagePath)
                 }
+                .accessibilityLabel("\(variety.name)の画像")
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(variety.name)
                         .font(.headline)
                         .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
                     Spacer()
                     if library.discoveredIDs.contains(variety.id) {
                         CapsuleBadge(text: "発見済み", tint: AppTheme.leaf)
@@ -343,6 +368,10 @@ private struct VarietyRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(selected ? AppTheme.strawberry : .clear, lineWidth: 2)
         )
+    }
+
+    private var primaryImage: VarietyImage? {
+        library.primaryImage(for: variety.id)
     }
 
     private var summary: String {
@@ -389,10 +418,11 @@ private struct ReviewHistoryRow: View {
                             AsyncVarietyImage(
                                 image: library.loadedImage(bucket: "review-images", path: image.storagePath),
                                 url: library.imageURL(bucket: "review-images", path: image.storagePath),
-                                height: 64
+                                height: 64,
+                                contentMode: .fit
                             )
                             .frame(width: 64)
-                            .task {
+                            .task(id: image.storagePath) {
                                 await library.ensureImage(bucket: "review-images", path: image.storagePath)
                             }
                         }
@@ -430,10 +460,11 @@ private struct VarietyImageGallery: View {
                                 AsyncVarietyImage(
                                     image: library.loadedImage(bucket: "variety-images", path: image.storagePath),
                                     url: library.imageURL(bucket: "variety-images", path: image.storagePath),
-                                    height: height
+                                    height: height,
+                                    contentMode: .fit
                                 )
                                 .frame(width: min(520, max(260, height * 1.28)))
-                                .task {
+                                .task(id: image.storagePath) {
                                     await library.ensureImage(bucket: "variety-images", path: image.storagePath)
                                 }
                                 if image.isPrimary {

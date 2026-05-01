@@ -326,10 +326,11 @@ private struct ExistingVarietyImages: View {
                                 AsyncVarietyImage(
                                     image: library.loadedImage(bucket: "variety-images", path: image.storagePath),
                                     url: library.imageURL(bucket: "variety-images", path: image.storagePath),
-                                    height: 96
+                                    height: 96,
+                                    contentMode: .fit
                                 )
                                 .frame(width: 116)
-                                .task {
+                                .task(id: image.storagePath) {
                                     await library.ensureImage(bucket: "variety-images", path: image.storagePath)
                                 }
                                 if image.isPrimary {

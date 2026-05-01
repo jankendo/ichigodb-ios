@@ -11,12 +11,28 @@ enum DiscoveryFilter: String, CaseIterable, Identifiable {
 }
 
 enum LibraryLens: String, CaseIterable, Identifiable {
+    case all = "全品種"
+    case discovered = "発見済み"
     case recent = "最近評価"
     case topRated = "高評価"
     case undiscovered = "未発見"
-    case all = "全品種"
 
     var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .all:
+            return "square.grid.2x2"
+        case .discovered:
+            return "checkmark.seal"
+        case .recent:
+            return "clock.arrow.circlepath"
+        case .topRated:
+            return "star.fill"
+        case .undiscovered:
+            return "questionmark.circle"
+        }
+    }
 }
 
 enum VarietySortOption: String, CaseIterable, Identifiable {
@@ -38,7 +54,7 @@ final class VarietyLibraryViewModel: ObservableObject {
     @Published var signedImageURLs: [String: URL] = [:]
     @Published var loadedImages: [String: UIImage] = [:]
     @Published var searchText = ""
-    @Published var lens: LibraryLens = .recent
+    @Published var lens: LibraryLens = .all
     @Published var sortOption: VarietySortOption = .name
     @Published var discoveryFilter: DiscoveryFilter = .all
     @Published var prefectureFilter = ""
@@ -113,14 +129,16 @@ final class VarietyLibraryViewModel: ObservableObject {
         }
         let lensed: [Variety]
         switch lens {
+        case .all:
+            lensed = filtered
+        case .discovered:
+            lensed = filtered.filter { discoveredIDs.contains($0.id) }
         case .recent:
             lensed = filtered.filter { latestReview(for: $0.id) != nil }
         case .topRated:
             lensed = filtered.filter { averageOverall(for: $0.id) != nil }
         case .undiscovered:
             lensed = filtered.filter { !discoveredIDs.contains($0.id) }
-        case .all:
-            lensed = filtered
         }
         return sorted(lensed)
     }
@@ -298,12 +316,6 @@ final class VarietyLibraryViewModel: ObservableObject {
 
     private func sorted(_ rows: [Variety]) -> [Variety] {
         switch lens {
-        case .recent:
-            return rows.sorted { (latestReview(for: $0.id)?.tastedDate ?? "") > (latestReview(for: $1.id)?.tastedDate ?? "") }
-        case .topRated:
-            return rows.sorted { (averageOverall(for: $0.id) ?? 0) > (averageOverall(for: $1.id) ?? 0) }
-        case .undiscovered:
-            return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         case .all:
             switch sortOption {
             case .name:
@@ -315,6 +327,21 @@ final class VarietyLibraryViewModel: ObservableObject {
             case .registeredYear:
                 return rows.sorted { ($0.registeredYear ?? 0) > ($1.registeredYear ?? 0) }
             }
+        case .discovered:
+            return rows.sorted {
+                let leftDate = latestReview(for: $0.id)?.tastedDate ?? ""
+                let rightDate = latestReview(for: $1.id)?.tastedDate ?? ""
+                if leftDate != rightDate {
+                    return leftDate > rightDate
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+        case .recent:
+            return rows.sorted { (latestReview(for: $0.id)?.tastedDate ?? "") > (latestReview(for: $1.id)?.tastedDate ?? "") }
+        case .topRated:
+            return rows.sorted { (averageOverall(for: $0.id) ?? 0) > (averageOverall(for: $1.id) ?? 0) }
+        case .undiscovered:
+            return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
     }
 }

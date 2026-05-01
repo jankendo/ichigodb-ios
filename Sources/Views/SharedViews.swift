@@ -6,28 +6,30 @@ struct AsyncVarietyImage: View {
     var image: UIImage?
     var url: URL?
     var height: CGFloat = 120
+    var contentMode: ContentMode = .fit
 
-    init(image: UIImage? = nil, url: URL? = nil, height: CGFloat = 120) {
+    init(image: UIImage? = nil, url: URL? = nil, height: CGFloat = 120, contentMode: ContentMode = .fit) {
         self.image = image
         self.url = url
         self.height = height
+        self.contentMode = contentMode
     }
 
     var body: some View {
-        Group {
+        ZStack {
+            AppTheme.elevated
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
+                fittedImage(Image(uiImage: image))
             } else if let url {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().scaledToFill()
+                        fittedImage(image)
                     case .failure:
                         placeholder
                     case .empty:
                         ProgressView()
+                            .tint(AppTheme.strawberry)
                     @unknown default:
                         placeholder
                     }
@@ -39,17 +41,126 @@ struct AsyncVarietyImage: View {
         .frame(height: height)
         .frame(maxWidth: .infinity)
         .clipped()
-        .background(AppTheme.elevated)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line.opacity(0.45)))
+    }
+
+    private func fittedImage(_ image: Image) -> some View {
+        image
+            .resizable()
+            .aspectRatio(contentMode: contentMode)
+            .frame(maxWidth: .infinity, maxHeight: height)
     }
 
     private var placeholder: some View {
+        VStack(spacing: 5) {
+            Image(systemName: "camera.macro")
+                .font(.title2)
+            Text("No Image")
+                .font(.caption2.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(AppTheme.muted.opacity(0.65))
+    }
+}
+
+struct FitThumbnail: View {
+    var image: UIImage
+    var size: CGFloat
+
+    var body: some View {
         ZStack {
             AppTheme.elevated
-            Image(systemName: "camera.macro")
-                .font(.largeTitle)
-                .foregroundStyle(AppTheme.muted.opacity(0.65))
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .padding(2)
         }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppTheme.line.opacity(0.45)))
+    }
+}
+
+struct CompactControlButtonStyle: ButtonStyle {
+    var prominent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(prominent ? Color.white : AppTheme.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(background(configuration), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(prominent ? Color.clear : AppTheme.line)
+            )
+    }
+
+    private func background(_ configuration: Configuration) -> Color {
+        if prominent {
+            return AppTheme.strawberry.opacity(configuration.isPressed ? 0.75 : 1)
+        }
+        return AppTheme.card.opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+struct IconBadgeButtonStyle: ButtonStyle {
+    var tint: Color = AppTheme.strawberry
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(tint)
+            .frame(width: 40, height: 40)
+            .background(tint.opacity(configuration.isPressed ? 0.18 : 0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(tint.opacity(0.25)))
+    }
+}
+
+struct LensChip: View {
+    var title: String
+    var systemImage: String
+    var selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(selected ? Color.white : AppTheme.ink)
+                .background(selected ? AppTheme.strawberry : AppTheme.card, in: Capsule())
+                .overlay(Capsule().stroke(selected ? Color.clear : AppTheme.line))
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(selected ? "選択中" : "")
+    }
+}
+
+struct ProgressStrip: View {
+    var value: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            let clamped = min(max(value, 0), 1)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(AppTheme.line.opacity(0.35))
+                Capsule()
+                    .fill(AppTheme.strawberry)
+                    .frame(width: clamped == 0 ? 0 : max(8, geometry.size.width * clamped))
+            }
+        }
+        .frame(height: 6)
+        .accessibilityLabel("図鑑進捗")
+        .accessibilityValue("\(Int(value * 100))パーセント")
     }
 }
 
@@ -80,11 +191,7 @@ struct PhotoSelectionStrip: View {
                     HStack(spacing: 10) {
                         ForEach(Array(images.enumerated()), id: \.offset) { index, image in
                             ZStack(alignment: .topTrailing) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 92, height: 92)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                FitThumbnail(image: image, size: 92)
                                 Button {
                                     images.remove(at: index)
                                 } label: {
