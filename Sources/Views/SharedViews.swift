@@ -16,6 +16,17 @@ extension View {
             }
         )
     }
+
+    func keyboardDoneToolbar() -> some View {
+        toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("閉じる") {
+                    UIApplication.shared.dismissActiveKeyboard()
+                }
+            }
+        }
+    }
 }
 
 struct AsyncVarietyImage: View {

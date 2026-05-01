@@ -47,8 +47,8 @@ struct LibraryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $library.searchText, prompt: "品種名・特徴")
             .toolbar { refreshToolbar }
+            .keyboardDoneToolbar()
             .overlay { loadingOverlay }
-            .dismissKeyboardOnTap()
             .navigationDestination(for: String.self) { id in
                 if let variety = library.varieties.first(where: { $0.id == id }) {
                     detail(for: variety)
@@ -69,8 +69,8 @@ struct LibraryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $library.searchText, prompt: "検索")
             .toolbar { refreshToolbar }
+            .keyboardDoneToolbar()
             .overlay { loadingOverlay }
-            .dismissKeyboardOnTap()
         } detail: {
             if let selected = selectedVariety {
                 NavigationStack {
@@ -242,6 +242,7 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 
@@ -265,6 +266,7 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 

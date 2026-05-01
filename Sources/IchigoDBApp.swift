@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum AppTab: Hashable {
     case library
@@ -53,8 +54,11 @@ private struct ConfiguredRootView: View {
                 .tag(AppTab.analysis)
         }
         .tint(AppTheme.strawberry)
-        .dismissKeyboardOnTap()
+        .toolbarBackground(.visible, for: .tabBar)
         .environmentObject(libraryVM)
+        .onChange(of: selectedTab) { _ in
+            UIApplication.shared.dismissActiveKeyboard()
+        }
         .task {
             if libraryVM.varieties.isEmpty {
                 await libraryVM.reload()

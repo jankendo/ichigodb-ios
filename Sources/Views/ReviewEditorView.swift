@@ -35,7 +35,6 @@ struct ReviewEditorView: View {
             .navigationTitle("品種評価")
             .navigationBarTitleDisplayMode(.large)
             .background(AppTheme.surface)
-            .dismissKeyboardOnTap()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("クリア") {
@@ -44,6 +43,7 @@ struct ReviewEditorView: View {
                     .disabled(viewModel.isSaving || mode != .entry)
                 }
             }
+            .keyboardDoneToolbar()
             .sheet(isPresented: $showVarietyPicker) {
                 VarietyPickerSheet(
                     varieties: library.activeVarieties,
@@ -222,6 +222,7 @@ struct ReviewEditorView: View {
         }
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
         .background(AppTheme.surface)
     }
 
@@ -265,6 +266,7 @@ struct ReviewEditorView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
     }
 
     private var historyList: some View {
@@ -299,6 +301,7 @@ struct ReviewEditorView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 
@@ -326,6 +329,7 @@ struct ReviewEditorView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 

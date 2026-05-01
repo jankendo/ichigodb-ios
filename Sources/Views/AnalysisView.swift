@@ -60,7 +60,7 @@ struct AnalysisView: View {
             .navigationTitle("いちご分析")
             .navigationBarTitleDisplayMode(.inline)
             .background(AppTheme.surface)
-            .dismissKeyboardOnTap()
+            .keyboardDoneToolbar()
         }
     }
 

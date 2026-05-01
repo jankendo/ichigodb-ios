@@ -131,6 +131,7 @@ struct VarietyEditorView: View {
             .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.surface)
             .dismissKeyboardOnTap()
+            .keyboardDoneToolbar()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("新規") {
