@@ -312,18 +312,18 @@ struct AnalysisView: View {
 
     private var varietyRankings: [VarietyRanking] {
         let grouped = Dictionary(grouping: reviews, by: \.varietyID)
-        return grouped.compactMap { id, rows in
+        let rows: [(variety: Variety, average: Double, count: Int)] = grouped.compactMap { id, rows in
             guard let variety = library.activeVarieties.first(where: { $0.id == id }), !rows.isEmpty else { return nil }
             let average = Double(rows.map(\.overall).reduce(0, +)) / Double(rows.count)
             return (variety, average, rows.count)
         }
-        .sorted {
-            if $0.1 != $1.1 { return $0.1 > $1.1 }
-            return $0.2 > $1.2
+        return rows.sorted {
+            if $0.average != $1.average { return $0.average > $1.average }
+            return $0.count > $1.count
         }
         .enumerated()
         .map { index, row in
-            VarietyRanking(rank: index + 1, variety: row.0, average: row.1, count: row.2)
+            VarietyRanking(rank: index + 1, variety: row.variety, average: row.average, count: row.count)
         }
     }
 
