@@ -212,15 +212,8 @@ struct PedigreeView: View {
     }
 
     private var filteredRootVarieties: [Variety] {
-        let normalized = viewModel.rootSearchText.normalizedSearchText
         let rows = library.activeVarieties
-        guard !normalized.isEmpty else { return rows }
-        return rows.filter { variety in
-            ([variety.name, variety.japaneseName, variety.originPrefecture].compactMap { $0 } + variety.aliasNames)
-                .joined(separator: " ")
-                .normalizedSearchText
-                .contains(normalized)
-        }
+        return rows.filter { $0.matchesSearch(viewModel.rootSearchText) }
     }
 
     private var panGesture: some Gesture {

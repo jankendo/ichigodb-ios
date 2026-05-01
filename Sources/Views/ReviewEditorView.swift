@@ -2,6 +2,7 @@ import SwiftUI
 
 private enum ReviewScreenMode: String, CaseIterable, Identifiable {
     case entry = "記録"
+    case queue = "メモ"
     case history = "履歴"
     case deleted = "復元"
 
@@ -11,6 +12,8 @@ private enum ReviewScreenMode: String, CaseIterable, Identifiable {
 struct ReviewEditorView: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     @ObservedObject var viewModel: ReviewEditorViewModel
+    @ObservedObject var editorVM: VarietyEditorViewModel
+    @Binding var selectedTab: AppTab
     @State private var mode: ReviewScreenMode = .entry
     @State private var showVarietyPicker = false
 
@@ -41,25 +44,16 @@ struct ReviewEditorView: View {
             .sheet(isPresented: $showVarietyPicker) {
                 VarietyPickerSheet(
                     varieties: library.activeVarieties,
-                    selection: $viewModel.draft.varietyID
+                    selection: $viewModel.draft.varietyID,
+                    onRegister: { name in
+                        editorVM.reset()
+                        editorVM.draft.name = name
+                        selectedTab = .varietyEditor
+                    }
                 )
             }
             .safeAreaInset(edge: .bottom) {
-                if mode == .entry {
-                    Button {
-                        Task {
-                            if await viewModel.save() != nil {
-                                await library.reload()
-                            }
-                        }
-                    } label: {
-                        Label(viewModel.isSaving ? "保存中" : "評価を保存", systemImage: "square.and.arrow.down")
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(viewModel.isSaving || viewModel.draft.varietyID.isEmpty)
-                    .padding()
-                    .background(.thinMaterial)
-                }
+                bottomActionBar
             }
             .alert("同じ日の評価があります", isPresented: $viewModel.duplicatePending) {
                 Button("上書き") {
@@ -84,6 +78,8 @@ struct ReviewEditorView: View {
         switch mode {
         case .entry:
             entryForm
+        case .queue:
+            queueList
         case .history:
             historyList
         case .deleted:
@@ -96,12 +92,12 @@ struct ReviewEditorView: View {
             Section {
                 AppScreenHeader(
                     title: "品種評価",
-                    subtitle: "品種を選び、5項目をタップしてすぐ記録できます。",
+                    subtitle: "食べ比べ中はメモに貯めて、最後にまとめて正式登録できます。",
                     systemImage: "star.leadinghalf.filled"
                 )
                 HStack(spacing: 10) {
                     MetricPill(title: "総合", value: "\(viewModel.draft.overall)/10")
-                    MetricPill(title: "画像", value: "\(viewModel.selectedImages.count)/3")
+                    MetricPill(title: "メモ", value: "\(viewModel.queuedDrafts.count)")
                 }
             }
             .listRowBackground(Color.clear)
@@ -139,6 +135,16 @@ struct ReviewEditorView: View {
                 PhotoSelectionStrip(images: $viewModel.selectedImages, maxCount: 3)
             }
 
+            if !viewModel.queuedDrafts.isEmpty {
+                Section("評価メモ") {
+                    Button {
+                        mode = .queue
+                    } label: {
+                        Label("\(viewModel.queuedDrafts.count)件を確認して正式登録", systemImage: "tray.full")
+                    }
+                }
+            }
+
             Section {
                 MessageBanner(message: viewModel.message)
                 ErrorBanner(message: viewModel.errorMessage)
@@ -146,6 +152,47 @@ struct ReviewEditorView: View {
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.surface)
+    }
+
+    private var queueList: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("食べ比べメモ", systemImage: "tray.full")
+                        .font(.headline)
+                    Text("同じ日に複数品種を試すときは、ここで見比べてからまとめて登録できます。重複する同日評価は正式登録時に上書きします。")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.muted)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(AppTheme.card)
+
+            if viewModel.queuedDrafts.isEmpty {
+                ContentUnavailableView(
+                    "評価メモは空です",
+                    systemImage: "tray",
+                    description: Text("記録タブで品種を選び、「メモに追加」を押してください。")
+                )
+                .listRowSeparator(.hidden)
+            } else {
+                ForEach(viewModel.queuedDrafts) { item in
+                    QueuedReviewCard(item: item) {
+                        viewModel.loadQueuedDraft(item)
+                        mode = .entry
+                    } onDelete: {
+                        viewModel.removeQueuedDraft(item.id)
+                    }
+                    .listRowSeparator(.hidden)
+                }
+            }
+
+            Section {
+                MessageBanner(message: viewModel.message)
+                ErrorBanner(message: viewModel.errorMessage)
+            }
+        }
+        .listStyle(.plain)
     }
 
     private var historyList: some View {
@@ -164,7 +211,10 @@ struct ReviewEditorView: View {
                 .listRowSeparator(.hidden)
             } else {
                 ForEach(filteredHistoryRows) { review in
-                    ReviewHistoryCard(review: review, allowRestore: false) {
+                    ReviewHistoryCard(review: review, allowRestore: false, editAction: {
+                        viewModel.edit(review)
+                        mode = .entry
+                    }) {
                         Task {
                             if await viewModel.deleteReview(id: review.id) {
                                 await library.reload()
@@ -190,7 +240,7 @@ struct ReviewEditorView: View {
                 .listRowSeparator(.hidden)
             } else {
                 ForEach(library.deletedReviews.sorted { $0.tastedDate > $1.tastedDate }) { review in
-                    ReviewHistoryCard(review: review, allowRestore: true) {
+                    ReviewHistoryCard(review: review, allowRestore: true, editAction: nil) {
                         Task {
                             if await viewModel.restoreReview(id: review.id) {
                                 await library.reload()
@@ -240,6 +290,49 @@ struct ReviewEditorView: View {
         viewModel.draft.varietyID.isEmpty ? "品種を選択" : library.varietyName(viewModel.draft.varietyID)
     }
 
+    @ViewBuilder
+    private var bottomActionBar: some View {
+        if mode == .entry {
+            HStack(spacing: 10) {
+                Button {
+                    viewModel.addCurrentDraftToQueue(varietyName: selectedVarietyName)
+                } label: {
+                    Label("メモに追加", systemImage: "tray.and.arrow.down")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(viewModel.isSaving || viewModel.draft.varietyID.isEmpty)
+
+                Button {
+                    Task {
+                        if await viewModel.save() != nil {
+                            await library.reload()
+                        }
+                    }
+                } label: {
+                    Label(viewModel.isSaving ? "保存中" : viewModel.draft.id == nil ? "正式登録" : "更新", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(viewModel.isSaving || viewModel.draft.varietyID.isEmpty)
+            }
+            .padding()
+            .background(.thinMaterial)
+        } else if mode == .queue {
+            Button {
+                Task {
+                    if await viewModel.saveQueuedDrafts() > 0 {
+                        await library.reload()
+                    }
+                }
+            } label: {
+                Label(viewModel.isSaving ? "登録中" : "\(viewModel.queuedDrafts.count)件を正式登録", systemImage: "checkmark.seal")
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(viewModel.isSaving || viewModel.queuedDrafts.isEmpty)
+            .padding()
+            .background(.thinMaterial)
+        }
+    }
+
     private var duplicateMessage: String {
         guard let id = viewModel.duplicateReviewID,
               let review = library.reviews.first(where: { $0.id == id }) else {
@@ -253,6 +346,7 @@ private struct ReviewHistoryCard: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     var review: Review
     var allowRestore: Bool
+    var editAction: (() -> Void)?
     var action: () -> Void
 
     var body: some View {
@@ -303,11 +397,20 @@ private struct ReviewHistoryCard: View {
                     }
                 }
             }
-            Button(action: action) {
-                Label(allowRestore ? "復元" : "削除", systemImage: allowRestore ? "arrow.uturn.backward" : "trash")
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 10) {
+                if let editAction {
+                    Button(action: editAction) {
+                        Label("編集", systemImage: "pencil")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                Button(action: action) {
+                    Label(allowRestore ? "復元" : "削除", systemImage: allowRestore ? "arrow.uturn.backward" : "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryButtonStyle())
             }
-            .buttonStyle(SecondaryButtonStyle())
         }
         .cardSurface()
     }
@@ -325,9 +428,69 @@ private struct ReviewHistoryCard: View {
     }
 }
 
+private struct QueuedReviewCard: View {
+    var item: QueuedReviewDraft
+    var onEdit: () -> Void
+    var onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.varietyName)
+                        .font(.headline)
+                    Text(Validation.isoDate(item.draft.tastedDate))
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                }
+                Spacer()
+                CapsuleBadge(text: "\(item.draft.overall)/10", tint: AppTheme.gold)
+            }
+
+            HStack(spacing: 6) {
+                score("甘", item.draft.sweetness)
+                score("酸", item.draft.sourness)
+                score("香", item.draft.aroma)
+                score("食", item.draft.texture)
+                score("見", item.draft.appearance)
+            }
+
+            if !item.draft.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(item.draft.comment)
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.ink)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: onEdit) {
+                    Label("編集", systemImage: "pencil")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+
+                Button(role: .destructive, action: onDelete) {
+                    Label("削除", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .cardSurface()
+    }
+
+    private func score(_ label: String, _ value: Int) -> some View {
+        Text("\(label)\(value)")
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.elevated, in: Capsule())
+    }
+}
+
 private struct VarietyPickerSheet: View {
     var varieties: [Variety]
     @Binding var selection: String
+    var onRegister: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
 
@@ -340,23 +503,37 @@ private struct VarietyPickerSheet: View {
                 } label: {
                     Label("未選択", systemImage: selection.isEmpty ? "checkmark.circle.fill" : "circle")
                 }
-                ForEach(filteredVarieties) { variety in
+                if filteredVarieties.isEmpty && !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ContentUnavailableView(
+                        "登録済み品種が見つかりません",
+                        systemImage: "plus.magnifyingglass",
+                        description: Text("このまま品種登録へ進めます。")
+                    )
                     Button {
-                        selection = variety.id
+                        onRegister(searchText.trimmingCharacters(in: .whitespacesAndNewlines))
                         dismiss()
                     } label: {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(variety.name)
-                                    .foregroundStyle(AppTheme.ink)
-                                Text(variety.originPrefecture ?? "産地未設定")
-                                    .font(.caption)
-                                    .foregroundStyle(AppTheme.muted)
-                            }
-                            Spacer()
-                            if selection == variety.id {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(AppTheme.strawberry)
+                        Label("「\(searchText)」を品種登録する", systemImage: "plus.square")
+                    }
+                } else {
+                    ForEach(filteredVarieties) { variety in
+                        Button {
+                            selection = variety.id
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(variety.name)
+                                        .foregroundStyle(AppTheme.ink)
+                                    Text(variety.originPrefecture ?? "産地未設定")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.muted)
+                                }
+                                Spacer()
+                                if selection == variety.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(AppTheme.strawberry)
+                                }
                             }
                         }
                     }
@@ -368,19 +545,19 @@ private struct VarietyPickerSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") { dismiss() }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("登録") {
+                        onRegister(searchText.trimmingCharacters(in: .whitespacesAndNewlines))
+                        dismiss()
+                    }
+                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
         }
     }
 
     private var filteredVarieties: [Variety] {
-        let normalized = searchText.normalizedSearchText
-        guard !normalized.isEmpty else { return varieties }
-        return varieties.filter { variety in
-            ([variety.name, variety.japaneseName, variety.originPrefecture].compactMap { $0 } + variety.aliasNames)
-                .joined(separator: " ")
-                .normalizedSearchText
-                .contains(normalized)
-        }
+        varieties.filter { $0.matchesSearch(searchText) }
     }
 }
 

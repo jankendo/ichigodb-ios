@@ -4,6 +4,7 @@ enum AppTab: Hashable {
     case library
     case varietyEditor
     case reviewEditor
+    case analysis
     case pedigree
 }
 
@@ -45,9 +46,13 @@ private struct ConfiguredRootView: View {
                 .tabItem { Label("登録", systemImage: "plus.square") }
                 .tag(AppTab.varietyEditor)
 
-            ReviewEditorView(viewModel: reviewVM)
+            ReviewEditorView(viewModel: reviewVM, editorVM: editorVM, selectedTab: $selectedTab)
                 .tabItem { Label("評価", systemImage: "star.leadinghalf.filled") }
                 .tag(AppTab.reviewEditor)
+
+            AnalysisView(selectedTab: $selectedTab)
+                .tabItem { Label("分析", systemImage: "chart.xyaxis.line") }
+                .tag(AppTab.analysis)
 
             PedigreeView(viewModel: pedigreeVM, reviewVM: reviewVM, selectedTab: $selectedTab)
                 .tabItem { Label("交配図", systemImage: "point.3.connected.trianglepath.dotted") }

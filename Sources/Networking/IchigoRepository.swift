@@ -82,6 +82,7 @@ struct VarietyDraft: Equatable {
 }
 
 struct ReviewDraft: Codable, Equatable {
+    var id: String?
     var varietyID = ""
     var tastedDate = Date()
     var sweetness = 3
@@ -96,6 +97,22 @@ struct ReviewDraft: Codable, Equatable {
     var overall: Int {
         let average = Double(sweetness + sourness + aroma + texture + appearance) / 5.0
         return min(10, max(1, Int((average * 2).rounded())))
+    }
+
+    init() {}
+
+    init(review: Review) {
+        id = review.id
+        varietyID = review.varietyID
+        tastedDate = Validation.date(fromISO: review.tastedDate)
+        sweetness = review.sweetness
+        sourness = review.sourness
+        aroma = review.aroma
+        texture = review.texture
+        appearance = review.appearance
+        purchasePlace = review.purchasePlace ?? ""
+        priceJPY = review.priceJPY
+        comment = review.comment ?? ""
     }
 }
 
@@ -283,7 +300,7 @@ final class IchigoRepository {
         guard !draft.varietyID.isEmpty else { throw ValidationError.required("品種") }
         let tastedDate = Validation.isoDate(draft.tastedDate)
         let duplicate = try await findDuplicateReview(varietyID: draft.varietyID, tastedDate: tastedDate)
-        if let duplicate, !overwriteDuplicate {
+        if let duplicate, duplicate.id != draft.id, !overwriteDuplicate {
             throw RepositoryError.duplicateReview(duplicate.id)
         }
 
@@ -302,7 +319,18 @@ final class IchigoRepository {
         ]
 
         let review: Review
-        if let duplicate {
+        if let id = draft.id {
+            let targetID: String
+            if let duplicate, duplicate.id != id, overwriteDuplicate {
+                _ = try await client.softDelete(Review.self, table: "reviews", id: id)
+                targetID = duplicate.id
+            } else {
+                targetID = id
+            }
+            let rows = try await client.updateJSON(Review.self, table: "reviews", payload: payload, filters: [.eq("id", targetID)])
+            guard let first = rows.first else { throw RepositoryError.missingCreatedRow }
+            review = first
+        } else if let duplicate {
             let rows = try await client.updateJSON(Review.self, table: "reviews", payload: payload, filters: [.eq("id", duplicate.id)])
             guard let first = rows.first else { throw RepositoryError.missingCreatedRow }
             review = first

@@ -48,8 +48,12 @@ struct LibraryView: View {
             .searchable(text: $library.searchText, prompt: "品種名・特徴")
             .toolbar { refreshToolbar }
             .overlay { loadingOverlay }
-            .navigationDestination(for: Variety.self) { variety in
-                detail(for: variety)
+            .navigationDestination(for: String.self) { id in
+                if let variety = library.varieties.first(where: { $0.id == id }) {
+                    detail(for: variety)
+                } else {
+                    ContentUnavailableView("品種を再読み込みしてください", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                }
             }
         }
     }
@@ -226,7 +230,7 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
             } else {
                 ForEach(library.filteredVarieties) { variety in
-                    NavigationLink(value: variety) {
+                    NavigationLink(value: variety.id) {
                         VarietyRow(variety: variety, selected: false)
                     }
                     .listRowSeparator(.hidden)
@@ -510,9 +514,9 @@ struct VarietyDetailView: View {
 
                 LazyVGrid(columns: metricColumns, spacing: 10) {
                     MetricPill(title: "評価数", value: "\(library.reviewCount(for: variety.id))")
-                    MetricPill(title: "糖度", value: IchigoFormat.brix(min: variety.brixMin, max: variety.brixMax))
-                    MetricPill(title: "酸味", value: variety.acidityLevel.label)
-                    MetricPill(title: "収穫", value: "\(IchigoFormat.month(variety.harvestStartMonth)) - \(IchigoFormat.month(variety.harvestEndMonth))")
+                    MetricPill(title: "平均点", value: averageText)
+                    MetricPill(title: "親品種", value: "\(library.parents(for: variety.id).count)")
+                    MetricPill(title: "子品種", value: "\(library.children(for: variety.id).count)")
                 }
 
                 reviewSummary
@@ -562,8 +566,6 @@ struct VarietyDetailView: View {
             labeled("別名", variety.aliasNames.isEmpty ? nil : variety.aliasNames.joined(separator: ", "))
             labeled("育成者", variety.developer)
             labeled("登録年", variety.registeredYear.map(String.init))
-            labeled("果皮色", variety.skinColor)
-            labeled("果肉色", variety.fleshColor)
             labeled("タグ", variety.tags.isEmpty ? nil : variety.tags.joined(separator: ", "))
         }
         .cardSurface()
@@ -667,6 +669,11 @@ struct VarietyDetailView: View {
 
     private var displayedReviews: [Review] {
         Array(library.reviews(for: variety.id).prefix(8))
+    }
+
+    private var averageText: String {
+        guard let average = library.averageOverall(for: variety.id) else { return "-" }
+        return String(format: "%.1f", average)
     }
 
     private func labeled(_ title: String, _ value: String?) -> some View {

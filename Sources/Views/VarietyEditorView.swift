@@ -6,6 +6,7 @@ struct VarietyEditorView: View {
     @State private var selectedEditID = ""
     @State private var showAdvanced = false
     @State private var showParentSelector = false
+    @State private var showEditPicker = false
     @State private var selectedRestoreID = ""
     @State private var deleteConfirmation = false
 
@@ -25,21 +26,25 @@ struct VarietyEditorView: View {
                 }
                 .listRowBackground(Color.clear)
 
-                Section("編集対象") {
-                    Picker("品種", selection: $selectedEditID) {
-                        Text("新規登録").tag("")
-                        ForEach(library.activeVarieties) { variety in
-                            Text(variety.name).tag(variety.id)
+                Section("登録済み確認") {
+                    Button {
+                        showEditPicker = true
+                    } label: {
+                        HStack {
+                            Label(viewModel.isEditing ? library.varietyName(viewModel.draft.id ?? "") : "登録済み品種を検索", systemImage: "magnifyingglass")
+                            Spacer()
+                            Text("\(library.activeVarieties.count)件")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.muted)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.muted)
                         }
                     }
-                    .pickerStyle(.menu)
-                    .onChange(of: selectedEditID) { id in
-                        if id.isEmpty {
-                            viewModel.reset()
-                        } else if let variety = library.varieties.first(where: { $0.id == id }) {
-                            viewModel.edit(variety, parentLinks: library.parentLinks)
-                        }
-                    }
+                    .buttonStyle(.plain)
+                    Text("品種名を入力すると、既存候補も下に表示します。登録済みならそのまま編集に切り替えられます。")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
                 }
 
                 Section("クイック登録") {
@@ -48,6 +53,8 @@ struct VarietyEditorView: View {
                         .font(.title3.weight(.semibold))
 
                     TextField("別名（カンマ区切り）", text: $viewModel.draft.aliasNamesText)
+
+                    existingCandidatePanel
 
                     Picker("都道府県", selection: $viewModel.draft.originPrefecture) {
                         Text("未設定").tag("")
@@ -140,6 +147,18 @@ struct VarietyEditorView: View {
                     selectedIDs: $viewModel.draft.parentIDs
                 )
             }
+            .sheet(isPresented: $showEditPicker) {
+                VarietyEditPickerSheet(
+                    varieties: library.activeVarieties,
+                    selectedID: $selectedEditID
+                ) { id in
+                    if id.isEmpty {
+                        viewModel.reset()
+                    } else if let variety = library.varieties.first(where: { $0.id == id }) {
+                        viewModel.edit(variety, parentLinks: library.parentLinks)
+                    }
+                }
+            }
             .confirmationDialog("この品種を削除しますか？", isPresented: $deleteConfirmation, titleVisibility: .visible) {
                 Button("削除", role: .destructive) {
                     Task {
@@ -220,6 +239,76 @@ struct VarietyEditorView: View {
         library.activeVarieties.filter { $0.id != (viewModel.draft.id ?? "") }
     }
 
+    @ViewBuilder
+    private var existingCandidatePanel: some View {
+        let rows = existingCandidates
+        if viewModel.draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Label("ひらがな・カタカナ違い、別名、登録番号でも探します。", systemImage: "text.magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(AppTheme.muted)
+        } else if rows.isEmpty {
+            Label("近い登録済み品種は見つかりません。新規登録できそうです。", systemImage: "checkmark.seal")
+                .font(.caption)
+                .foregroundStyle(AppTheme.leaf)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(exactDuplicate == nil ? "似ている登録済み品種" : "既に登録済みの可能性があります", systemImage: exactDuplicate == nil ? "sparkle.magnifyingglass" : "exclamationmark.triangle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(exactDuplicate == nil ? AppTheme.ink : AppTheme.strawberry)
+                ForEach(rows.prefix(5)) { variety in
+                    Button {
+                        selectedEditID = variety.id
+                        viewModel.edit(variety, parentLinks: library.parentLinks)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(variety.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(AppTheme.ink)
+                                Text(candidateSubtitle(for: variety))
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.muted)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "pencil")
+                                .foregroundStyle(AppTheme.strawberry)
+                        }
+                        .padding(10)
+                        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(variety.isExactMatch(for: viewModel.draft.name) ? AppTheme.strawberry : AppTheme.line))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var existingCandidates: [Variety] {
+        let query = viewModel.draft.name
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        return library.activeVarieties
+            .filter { $0.id != (viewModel.draft.id ?? "") && $0.matchesSearch(query) }
+            .sorted {
+                if $0.isExactMatch(for: query) != $1.isExactMatch(for: query) {
+                    return $0.isExactMatch(for: query)
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+    }
+
+    private var exactDuplicate: Variety? {
+        existingCandidates.first { $0.isExactMatch(for: viewModel.draft.name) }
+    }
+
+    private func candidateSubtitle(for variety: Variety) -> String {
+        var parts = [String]()
+        if let prefecture = variety.originPrefecture { parts.append(prefecture) }
+        if let number = variety.registrationNumber { parts.append("登録 \(number)") }
+        if !variety.aliasNames.isEmpty { parts.append("別名 \(variety.aliasNames.prefix(2).joined(separator: ", "))") }
+        return parts.isEmpty ? "登録済み" : parts.joined(separator: " / ")
+    }
+
     private var parentSummary: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
@@ -290,14 +379,7 @@ private struct ParentSelectionSheet: View {
     }
 
     private var filteredCandidates: [Variety] {
-        let normalized = searchText.normalizedSearchText
-        guard !normalized.isEmpty else { return candidates }
-        return candidates.filter { variety in
-            ([variety.name, variety.japaneseName, variety.originPrefecture].compactMap { $0 } + variety.aliasNames)
-                .joined(separator: " ")
-                .normalizedSearchText
-                .contains(normalized)
-        }
+        candidates.filter { $0.matchesSearch(searchText) }
     }
 
     private func toggle(_ id: String) {
@@ -306,6 +388,86 @@ private struct ParentSelectionSheet: View {
         } else {
             selectedIDs.append(id)
         }
+    }
+}
+
+private struct VarietyEditPickerSheet: View {
+    var varieties: [Variety]
+    @Binding var selectedID: String
+    var onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button {
+                    selectedID = ""
+                    onSelect("")
+                    dismiss()
+                } label: {
+                    Label("新規登録", systemImage: selectedID.isEmpty ? "checkmark.circle.fill" : "plus.circle")
+                }
+
+                if filteredVarieties.isEmpty {
+                    ContentUnavailableView(
+                        "一致する登録済み品種がありません",
+                        systemImage: "magnifyingglass",
+                        description: Text("表記を変えるか、このまま新規登録してください。")
+                    )
+                } else {
+                    ForEach(filteredVarieties) { variety in
+                        Button {
+                            selectedID = variety.id
+                            onSelect(variety.id)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(variety.name)
+                                        .font(.headline)
+                                        .foregroundStyle(AppTheme.ink)
+                                    Text(subtitle(for: variety))
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.muted)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                if selectedID == variety.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(AppTheme.strawberry)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $searchText, prompt: "品種名・別名・登録番号")
+            .navigationTitle("登録済み品種")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var filteredVarieties: [Variety] {
+        varieties.filter { $0.matchesSearch(searchText) }
+            .sorted {
+                if $0.isExactMatch(for: searchText) != $1.isExactMatch(for: searchText) {
+                    return $0.isExactMatch(for: searchText)
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+    }
+
+    private func subtitle(for variety: Variety) -> String {
+        var parts = [String]()
+        if let prefecture = variety.originPrefecture { parts.append(prefecture) }
+        if let number = variety.registrationNumber { parts.append("登録 \(number)") }
+        if !variety.aliasNames.isEmpty { parts.append("別名 \(variety.aliasNames.prefix(2).joined(separator: ", "))") }
+        return parts.isEmpty ? "登録済み" : parts.joined(separator: " / ")
     }
 }
 

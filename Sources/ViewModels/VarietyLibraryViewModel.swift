@@ -65,6 +65,8 @@ final class VarietyLibraryViewModel: ObservableObject {
 
     private let repository: IchigoRepository
     private let imageCache = ImageCacheStore()
+    private let loadedImageLimit = 160
+    private var loadedImageOrder: [String] = []
 
     init(repository: IchigoRepository) {
         self.repository = repository
@@ -108,7 +110,6 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     var filteredVarieties: [Variety] {
-        let normalized = searchText.normalizedSearchText
         let filtered = activeVarieties.filter { variety in
             if !prefectureFilter.isEmpty && variety.originPrefecture != prefectureFilter {
                 return false
@@ -124,8 +125,7 @@ final class VarietyLibraryViewModel: ObservableObject {
             case .undiscovered:
                 guard !discoveredIDs.contains(variety.id) else { return false }
             }
-            guard !normalized.isEmpty else { return true }
-            return variety.searchBlob.contains(normalized)
+            return variety.matchesSearch(searchText)
         }
         let lensed: [Variety]
         switch lens {
@@ -276,12 +276,12 @@ final class VarietyLibraryViewModel: ObservableObject {
         let key = cacheKey(bucket: bucket, path: path)
         guard loadedImages[key] == nil else { return }
         if let cached = imageCache.image(bucket: bucket, path: path) {
-            loadedImages[key] = cached
+            rememberLoadedImage(cached, key: key)
             return
         }
         do {
             let data = try await repository.downloadImageData(bucket: bucket, path: path)
-            loadedImages[key] = imageCache.store(data, bucket: bucket, path: path)
+            rememberLoadedImage(imageCache.store(data, bucket: bucket, path: path), key: key)
         } catch {
             await ensureSignedURL(bucket: bucket, path: path)
         }
@@ -290,6 +290,7 @@ final class VarietyLibraryViewModel: ObservableObject {
     func clearCachedImage(bucket: String, path: String) {
         let key = cacheKey(bucket: bucket, path: path)
         loadedImages[key] = nil
+        loadedImageOrder.removeAll { $0 == key }
         signedImageURLs[key] = nil
         imageCache.remove(bucket: bucket, path: path)
     }
@@ -312,6 +313,21 @@ final class VarietyLibraryViewModel: ObservableObject {
 
     private func cacheKey(bucket: String, path: String) -> String {
         "\(bucket)/\(path)"
+    }
+
+    private func rememberLoadedImage(_ image: UIImage?, key: String) {
+        guard let image else {
+            loadedImages[key] = nil
+            loadedImageOrder.removeAll { $0 == key }
+            return
+        }
+        loadedImages[key] = image
+        loadedImageOrder.removeAll { $0 == key }
+        loadedImageOrder.append(key)
+        while loadedImageOrder.count > loadedImageLimit, let oldest = loadedImageOrder.first {
+            loadedImageOrder.removeFirst()
+            loadedImages[oldest] = nil
+        }
     }
 
     private func sorted(_ rows: [Variety]) -> [Variety] {
@@ -343,21 +359,5 @@ final class VarietyLibraryViewModel: ObservableObject {
         case .undiscovered:
             return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
-    }
-}
-
-private extension Variety {
-    var searchBlob: String {
-        ([name, japaneseName, registrationNumber, applicationNumber, developer, originPrefecture, description, characteristicsSummary]
-            .compactMap { $0 } + aliasNames + tags)
-            .joined(separator: " ")
-            .normalizedSearchText
-    }
-}
-
-extension String {
-    var normalizedSearchText: String {
-        let folded = folding(options: [.caseInsensitive, .widthInsensitive, .diacriticInsensitive], locale: Locale(identifier: "ja_JP"))
-        return folded.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
