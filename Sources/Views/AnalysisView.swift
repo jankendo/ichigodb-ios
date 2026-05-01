@@ -240,7 +240,7 @@ struct AnalysisView: View {
         .cardSurface()
     }
 
-    private func rankedVarieties<Content: View>(prefix limit: Int, @ViewBuilder row: (VarietyRanking) -> Content) -> some View {
+    private func rankedVarieties<Content: View>(prefix limit: Int, @ViewBuilder row: @escaping (VarietyRanking) -> Content) -> some View {
         let rows = varietyRankings.prefix(limit)
         return VStack(spacing: 10) {
             if rows.isEmpty {
