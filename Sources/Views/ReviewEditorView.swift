@@ -16,6 +16,8 @@ struct ReviewEditorView: View {
     @Binding var selectedTab: AppTab
     @State private var mode: ReviewScreenMode = .entry
     @State private var showVarietyPicker = false
+    @State private var showBatchPicker = false
+    @State private var batchSelection = Set<String>()
 
     var body: some View {
         NavigationStack {
@@ -33,6 +35,7 @@ struct ReviewEditorView: View {
             .navigationTitle("品種評価")
             .navigationBarTitleDisplayMode(.large)
             .background(AppTheme.surface)
+            .dismissKeyboardOnTap()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("クリア") {
@@ -45,6 +48,17 @@ struct ReviewEditorView: View {
                 VarietyPickerSheet(
                     varieties: library.activeVarieties,
                     selection: $viewModel.draft.varietyID,
+                    onRegister: { name in
+                        editorVM.reset()
+                        editorVM.draft.name = name
+                        selectedTab = .varietyEditor
+                    }
+                )
+            }
+            .sheet(isPresented: $showBatchPicker) {
+                MultiVarietyPickerSheet(
+                    varieties: library.activeVarieties,
+                    selection: $batchSelection,
                     onRegister: { name in
                         editorVM.reset()
                         editorVM.draft.name = name
@@ -119,6 +133,62 @@ struct ReviewEditorView: View {
                 DatePicker("試食日", selection: $viewModel.draft.tastedDate, in: ...Date(), displayedComponents: .date)
             }
 
+            Section("食べ比べセット") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("複数品種を同時メモ")
+                                .font(.headline)
+                            Text("同じ日・同じスコア・同じメモで複数品種を一気に評価メモへ追加できます。")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.muted)
+                        }
+                        Spacer()
+                        CapsuleBadge(text: "\(batchSelection.count)件", tint: AppTheme.gold)
+                    }
+
+                    Button {
+                        if !viewModel.draft.varietyID.isEmpty {
+                            batchSelection.insert(viewModel.draft.varietyID)
+                        }
+                        showBatchPicker = true
+                    } label: {
+                        Label("品種を複数選択", systemImage: "checklist")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    if !batchSelection.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(selectedBatchIDs, id: \.self) { id in
+                                    CapsuleBadge(text: library.varietyName(id), tint: AppTheme.leaf)
+                                }
+                            }
+                        }
+
+                        Button {
+                            viewModel.addBatchToQueue(
+                                varietyIDs: Array(batchSelection),
+                                nameResolver: library.varietyName
+                            )
+                            batchSelection.removeAll()
+                            mode = .queue
+                        } label: {
+                            Label("\(batchSelection.count)件をメモに追加", systemImage: "tray.and.arrow.down")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(!viewModel.selectedImages.isEmpty)
+                    }
+
+                    if !viewModel.selectedImages.isEmpty {
+                        Text("画像付きの評価は、画像の取り違えを防ぐため1件ずつ正式登録してください。")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
             Section("2. スコア") {
                 ScoreCapsuleControl(title: "甘味", value: $viewModel.draft.sweetness)
                 ScoreCapsuleControl(title: "酸味", value: $viewModel.draft.sourness)
@@ -151,6 +221,7 @@ struct ReviewEditorView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(AppTheme.surface)
     }
 
@@ -193,6 +264,7 @@ struct ReviewEditorView: View {
             }
         }
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var historyList: some View {
@@ -226,6 +298,7 @@ struct ReviewEditorView: View {
             }
         }
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { await library.reload() }
     }
 
@@ -252,6 +325,7 @@ struct ReviewEditorView: View {
             }
         }
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { await library.reload() }
     }
 
@@ -288,6 +362,11 @@ struct ReviewEditorView: View {
 
     private var selectedVarietyName: String {
         viewModel.draft.varietyID.isEmpty ? "品種を選択" : library.varietyName(viewModel.draft.varietyID)
+    }
+
+    private var selectedBatchIDs: [String] {
+        batchSelection
+            .sorted { library.varietyName($0).localizedStandardCompare(library.varietyName($1)) == .orderedAscending }
     }
 
     @ViewBuilder
@@ -487,6 +566,107 @@ private struct QueuedReviewCard: View {
     }
 }
 
+private struct MultiVarietyPickerSheet: View {
+    var varieties: [Variety]
+    @Binding var selection: Set<String>
+    var onRegister: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        Label("\(selection.count)件選択中", systemImage: "checklist")
+                            .font(.headline)
+                        Spacer()
+                        if !selection.isEmpty {
+                            Button("全解除") {
+                                selection.removeAll()
+                            }
+                            .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                }
+                .listRowBackground(AppTheme.card)
+
+                if filteredVarieties.isEmpty && !cleanedSearchText.isEmpty {
+                    ContentUnavailableView(
+                        "登録済み品種が見つかりません",
+                        systemImage: "plus.magnifyingglass",
+                        description: Text("品種登録してから評価へ戻れます。")
+                    )
+                    Button {
+                        onRegister(cleanedSearchText)
+                        dismiss()
+                    } label: {
+                        Label("「\(cleanedSearchText)」を品種登録する", systemImage: "plus.square")
+                    }
+                } else {
+                    ForEach(filteredVarieties) { variety in
+                        Button {
+                            toggle(variety.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: selection.contains(variety.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selection.contains(variety.id) ? AppTheme.strawberry : AppTheme.muted)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(variety.name)
+                                        .font(.headline)
+                                        .foregroundStyle(AppTheme.ink)
+                                    Text(variety.originPrefecture ?? "産地未設定")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.muted)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .searchable(text: $searchText, prompt: "品種名・別名で検索")
+            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTap()
+            .navigationTitle("食べ比べ品種")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("決定") { dismiss() }
+                        .disabled(selection.isEmpty)
+                }
+            }
+        }
+    }
+
+    private var cleanedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var filteredVarieties: [Variety] {
+        varieties
+            .filter { $0.matchesSearch(searchText) }
+            .sorted {
+                if $0.isExactMatch(for: searchText) != $1.isExactMatch(for: searchText) {
+                    return $0.isExactMatch(for: searchText)
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+    }
+
+    private func toggle(_ id: String) {
+        if selection.contains(id) {
+            selection.remove(id)
+        } else {
+            selection.insert(id)
+        }
+    }
+}
+
 private struct VarietyPickerSheet: View {
     var varieties: [Variety]
     @Binding var selection: String
@@ -539,7 +719,10 @@ private struct VarietyPickerSheet: View {
                     }
                 }
             }
+            .listStyle(.plain)
             .searchable(text: $searchText, prompt: "品種名・別名で検索")
+            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTap()
             .navigationTitle("品種を選択")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

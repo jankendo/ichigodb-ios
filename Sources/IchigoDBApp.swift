@@ -5,7 +5,6 @@ enum AppTab: Hashable {
     case varietyEditor
     case reviewEditor
     case analysis
-    case pedigree
 }
 
 @main
@@ -26,7 +25,6 @@ private struct ConfiguredRootView: View {
     @StateObject private var libraryVM: VarietyLibraryViewModel
     @StateObject private var editorVM: VarietyEditorViewModel
     @StateObject private var reviewVM: ReviewEditorViewModel
-    @StateObject private var pedigreeVM = PedigreeGraphViewModel()
     @State private var selectedTab: AppTab = .library
 
     init(config: SupabaseConfig) {
@@ -53,12 +51,9 @@ private struct ConfiguredRootView: View {
             AnalysisView(selectedTab: $selectedTab)
                 .tabItem { Label("分析", systemImage: "chart.xyaxis.line") }
                 .tag(AppTab.analysis)
-
-            PedigreeView(viewModel: pedigreeVM, reviewVM: reviewVM, selectedTab: $selectedTab)
-                .tabItem { Label("交配図", systemImage: "point.3.connected.trianglepath.dotted") }
-                .tag(AppTab.pedigree)
         }
         .tint(AppTheme.strawberry)
+        .dismissKeyboardOnTap()
         .environmentObject(libraryVM)
         .task {
             if libraryVM.varieties.isEmpty {

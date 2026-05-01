@@ -2,8 +2,17 @@ import SwiftUI
 
 private enum AnalysisMode: String, CaseIterable, Identifiable {
     case overview = "概要"
+    case reviews = "全レビュー"
     case ranking = "ランキング"
-    case discovery = "発見"
+    case trends = "傾向"
+
+    var id: String { rawValue }
+}
+
+private enum AnalysisReviewSort: String, CaseIterable, Identifiable {
+    case latest = "新しい順"
+    case score = "高評価順"
+    case value = "コスパ順"
 
     var id: String { rawValue }
 }
@@ -12,6 +21,9 @@ struct AnalysisView: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     @Binding var selectedTab: AppTab
     @State private var mode: AnalysisMode = .overview
+    @State private var reviewSearchText = ""
+    @State private var reviewMinimumOverall = 1
+    @State private var reviewSort: AnalysisReviewSort = .latest
 
     var body: some View {
         NavigationStack {
@@ -30,20 +42,25 @@ struct AnalysisView: View {
                         switch mode {
                         case .overview:
                             overview
+                        case .reviews:
+                            reviewsBoard
                         case .ranking:
                             ranking
-                        case .discovery:
-                            discovery
+                        case .trends:
+                            trends
                         }
                     }
                     .padding()
-                    .frame(maxWidth: 920, alignment: .leading)
+                    .frame(maxWidth: 940, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
+                .scrollDismissesKeyboard(.interactively)
+                .dismissKeyboardOnTap()
             }
             .navigationTitle("いちご分析")
             .navigationBarTitleDisplayMode(.inline)
             .background(AppTheme.surface)
+            .dismissKeyboardOnTap()
         }
     }
 
@@ -54,11 +71,19 @@ struct AnalysisView: View {
                 Text("Taste Board")
                     .font(.title2.bold())
                     .foregroundStyle(AppTheme.ink)
-                Text("食べた記録から、推し品種・傾向・次の一粒を見つけます。")
+                Text("全レビューから推し品種、食べ比べ結果、次に試す候補をすぐ見つけます。")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.muted)
+                    .lineLimit(2)
             }
             Spacer()
+            Button {
+                selectedTab = .reviewEditor
+            } label: {
+                Image(systemName: "star.fill")
+            }
+            .buttonStyle(IconBadgeButtonStyle(tint: AppTheme.gold))
+            .accessibilityLabel("評価を追加")
         }
         .cardSurface()
     }
@@ -69,15 +94,57 @@ struct AnalysisView: View {
                 MetricPill(title: "評価数", value: "\(reviews.count)")
                 MetricPill(title: "発見品種", value: "\(library.discoveredIDs.count)")
                 MetricPill(title: "平均点", value: overallAverageText)
-                MetricPill(title: "得意な軸", value: strongestTrait?.label ?? "-")
+                MetricPill(title: "推し軸", value: strongestTrait?.label ?? "-")
             }
 
             if reviews.isEmpty {
                 emptyAnalysis
             } else {
+                insightStrip
                 traitBars
                 recentMomentum
-                valueHighlights
+            }
+        }
+    }
+
+    private var reviewsBoard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            analysisSection("全レビューを探す", systemImage: "list.bullet.rectangle") {
+                VStack(spacing: 12) {
+                    TextField("品種名・メモ・購入場所", text: $reviewSearchText)
+                        .textInputAutocapitalization(.never)
+                        .padding(12)
+                        .background(AppTheme.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
+
+                    ViewThatFits {
+                        HStack(spacing: 10) {
+                            reviewSortPicker
+                            minimumScoreStepper
+                        }
+                        VStack(spacing: 10) {
+                            reviewSortPicker
+                            minimumScoreStepper
+                        }
+                    }
+                }
+            }
+
+            analysisSection("\(filteredReviews.count)件のレビュー", systemImage: "star.bubble") {
+                if filteredReviews.isEmpty {
+                    Text("条件に合うレビューがありません。検索語やスコア条件を変えてください。")
+                        .foregroundStyle(AppTheme.muted)
+                } else {
+                    VStack(spacing: 12) {
+                        ForEach(Array(filteredReviews.prefix(80))) { review in
+                            AnalysisReviewCard(review: review) {
+                                library.searchText = library.varietyName(review.varietyID)
+                                library.lens = .discovered
+                                selectedTab = .library
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -85,11 +152,11 @@ struct AnalysisView: View {
     private var ranking: some View {
         VStack(alignment: .leading, spacing: 16) {
             analysisSection("総合ランキング", systemImage: "crown") {
-                rankedVarieties(prefix: 12) { row in
+                rankedVarieties(prefix: 15) { row in
                     RankingRow(
                         rank: row.rank,
                         title: row.variety.name,
-                        subtitle: "\(row.count)件の評価",
+                        subtitle: "\(row.count)件の評価 / 最新 \(row.latestDate)",
                         value: String(format: "%.1f", row.average),
                         tint: row.rank <= 3 ? AppTheme.gold : AppTheme.strawberry
                     )
@@ -107,11 +174,32 @@ struct AnalysisView: View {
                     )
                 }
             }
+
+            valueHighlights
         }
     }
 
-    private var discovery: some View {
+    private var trends: some View {
         VStack(alignment: .leading, spacing: 16) {
+            recentMomentum
+
+            analysisSection("県別の発見", systemImage: "map") {
+                if prefectureRows.isEmpty {
+                    Text("品種の産地情報が入ると、県別の傾向が見えてきます。")
+                        .foregroundStyle(AppTheme.muted)
+                } else {
+                    ForEach(prefectureRows.prefix(10)) { row in
+                        RankingRow(
+                            rank: nil,
+                            title: row.prefecture,
+                            subtitle: "\(row.reviewCount)件 / \(row.varietyCount)品種",
+                            value: String(format: "%.1f", row.average),
+                            tint: AppTheme.leaf
+                        )
+                    }
+                }
+            }
+
             analysisSection("次に試したい候補", systemImage: "binoculars") {
                 let rows = library.activeVarieties
                     .filter { !library.discoveredIDs.contains($0.id) }
@@ -140,28 +228,58 @@ struct AnalysisView: View {
                                     .foregroundStyle(AppTheme.strawberry)
                             }
                             .padding(12)
-                            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
+                            .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
                 }
             }
+        }
+    }
 
-            analysisSection("最近の発見", systemImage: "clock") {
-                if recentReviews.isEmpty {
-                    Text("まだ評価がありません。")
-                        .foregroundStyle(AppTheme.muted)
-                } else {
-                    ForEach(recentReviews.prefix(8)) { review in
-                        RankingRow(
-                            rank: nil,
-                            title: library.varietyName(review.varietyID),
-                            subtitle: review.tastedDate,
-                            value: "\(review.overall)",
-                            tint: AppTheme.strawberry
-                        )
-                    }
+    private var reviewSortPicker: some View {
+        Picker("並び順", selection: $reviewSort) {
+            ForEach(AnalysisReviewSort.allCases) { option in
+                Text(option.rawValue).tag(option)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(AppTheme.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
+    }
+
+    private var minimumScoreStepper: some View {
+        Stepper("総合 \(reviewMinimumOverall) 以上", value: $reviewMinimumOverall, in: 1...10)
+            .padding(12)
+            .background(AppTheme.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
+    }
+
+    private var insightStrip: some View {
+        analysisSection("今の味覚メモ", systemImage: "heart.text.square") {
+            VStack(alignment: .leading, spacing: 10) {
+                if let top = varietyRankings.first {
+                    InsightLine(
+                        systemImage: "heart.fill",
+                        title: "いまの推し",
+                        value: "\(top.variety.name) / 平均 \(String(format: "%.1f", top.average))"
+                    )
+                }
+                if let latest = recentReviews.first {
+                    InsightLine(
+                        systemImage: "clock",
+                        title: "最新レビュー",
+                        value: "\(library.varietyName(latest.varietyID)) / \(latest.tastedDate)"
+                    )
+                }
+                if let value = valueScoreRows.first {
+                    InsightLine(
+                        systemImage: "yensign.circle",
+                        title: "コスパ注目",
+                        value: "\(library.varietyName(value.varietyID)) / \(value.priceJPY ?? 0)円"
+                    )
                 }
             }
         }
@@ -187,33 +305,31 @@ struct AnalysisView: View {
     }
 
     private var recentMomentum: some View {
-        analysisSection("最近の評価ペース", systemImage: "waveform.path.ecg") {
-            ForEach(monthlyCounts) { row in
-                HStack {
-                    Text(row.month)
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 62, alignment: .leading)
-                    ProgressView(value: Double(row.count), total: Double(maxMonthlyCount))
-                        .tint(AppTheme.strawberry)
-                    Text("\(row.count)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(AppTheme.muted)
-                        .frame(width: 28, alignment: .trailing)
+        analysisSection("評価ペース", systemImage: "waveform.path.ecg") {
+            if monthlyCounts.isEmpty {
+                Text("評価が増えると月別ペースを表示します。")
+                    .foregroundStyle(AppTheme.muted)
+            } else {
+                ForEach(monthlyCounts) { row in
+                    HStack {
+                        Text(row.month)
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 62, alignment: .leading)
+                        ProgressView(value: Double(row.count), total: Double(maxMonthlyCount))
+                            .tint(AppTheme.strawberry)
+                        Text("\(row.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(AppTheme.muted)
+                            .frame(width: 28, alignment: .trailing)
+                    }
                 }
             }
         }
     }
 
     private var valueHighlights: some View {
-        analysisSection("コスパメモ", systemImage: "yensign.circle") {
-            let rows = reviews
-                .filter { ($0.priceJPY ?? 0) > 0 }
-                .sorted {
-                    let left = Double($0.overall) / Double(max($0.priceJPY ?? 1, 1))
-                    let right = Double($1.overall) / Double(max($1.priceJPY ?? 1, 1))
-                    return left > right
-                }
-                .prefix(5)
+        analysisSection("コスパランキング", systemImage: "yensign.circle") {
+            let rows = valueScoreRows.prefix(8)
             if rows.isEmpty {
                 Text("価格を入れると、満足度の高い購入メモが見えてきます。")
                     .foregroundStyle(AppTheme.muted)
@@ -263,7 +379,49 @@ struct AnalysisView: View {
     }
 
     private var recentReviews: [Review] {
-        reviews.sorted { $0.tastedDate > $1.tastedDate }
+        reviews.sorted {
+            if $0.tastedDate != $1.tastedDate {
+                return $0.tastedDate > $1.tastedDate
+            }
+            return ($0.updatedAt ?? $0.createdAt ?? "") > ($1.updatedAt ?? $1.createdAt ?? "")
+        }
+    }
+
+    private var filteredReviews: [Review] {
+        let filtered = reviews.filter { review in
+            review.overall >= reviewMinimumOverall && reviewMatchesSearch(review)
+        }
+        switch reviewSort {
+        case .latest:
+            return filtered.sorted {
+                if $0.tastedDate != $1.tastedDate {
+                    return $0.tastedDate > $1.tastedDate
+                }
+                return $0.overall > $1.overall
+            }
+        case .score:
+            return filtered.sorted {
+                if $0.overall != $1.overall {
+                    return $0.overall > $1.overall
+                }
+                return $0.tastedDate > $1.tastedDate
+            }
+        case .value:
+            return filtered.sorted { valueScore($0) > valueScore($1) }
+        }
+    }
+
+    private func reviewMatchesSearch(_ review: Review) -> Bool {
+        let query = reviewSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        let variety = library.activeVarieties.first(where: { $0.id == review.varietyID })
+        if variety?.matchesSearch(query) == true {
+            return true
+        }
+        let text = [review.comment, review.purchasePlace, review.tastedDate]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        return SearchIndex.matches(query: query, in: text)
     }
 
     private var overallAverageText: String {
@@ -312,18 +470,20 @@ struct AnalysisView: View {
 
     private var varietyRankings: [VarietyRanking] {
         let grouped = Dictionary(grouping: reviews, by: \.varietyID)
-        let rows: [(variety: Variety, average: Double, count: Int)] = grouped.compactMap { id, rows in
+        let rows: [(variety: Variety, average: Double, count: Int, latestDate: String)] = grouped.compactMap { id, rows in
             guard let variety = library.activeVarieties.first(where: { $0.id == id }), !rows.isEmpty else { return nil }
             let average = Double(rows.map(\.overall).reduce(0, +)) / Double(rows.count)
-            return (variety, average, rows.count)
+            let latest = rows.map(\.tastedDate).max() ?? "-"
+            return (variety, average, rows.count, latest)
         }
         return rows.sorted {
             if $0.average != $1.average { return $0.average > $1.average }
-            return $0.count > $1.count
+            if $0.count != $1.count { return $0.count > $1.count }
+            return $0.latestDate > $1.latestDate
         }
         .enumerated()
         .map { index, row in
-            VarietyRanking(rank: index + 1, variety: row.variety, average: row.average, count: row.count)
+            VarietyRanking(rank: index + 1, variety: row.variety, average: row.average, count: row.count, latestDate: row.latestDate)
         }
     }
 
@@ -333,12 +493,40 @@ struct AnalysisView: View {
         }
         return Array(grouped.map { MonthlyReviewCount(month: $0.key, count: $0.value.count) }
             .sorted { $0.month > $1.month }
-            .prefix(6)
+            .prefix(8)
             .reversed())
     }
 
     private var maxMonthlyCount: Int {
         max(monthlyCounts.map { $0.count }.max() ?? 1, 1)
+    }
+
+    private var valueScoreRows: [Review] {
+        reviews
+            .filter { ($0.priceJPY ?? 0) > 0 }
+            .sorted { valueScore($0) > valueScore($1) }
+    }
+
+    private func valueScore(_ review: Review) -> Double {
+        Double(review.overall) / Double(max(review.priceJPY ?? 1, 1))
+    }
+
+    private var prefectureRows: [PrefectureAnalysisRow] {
+        let grouped = Dictionary(grouping: reviews) { review -> String in
+            library.activeVarieties.first(where: { $0.id == review.varietyID })?.originPrefecture ?? "産地未設定"
+        }
+        return grouped.compactMap { prefecture, rows in
+            guard !rows.isEmpty else { return nil }
+            let average = Double(rows.map(\.overall).reduce(0, +)) / Double(rows.count)
+            let varietyCount = Set(rows.map(\.varietyID)).count
+            return PrefectureAnalysisRow(prefecture: prefecture, reviewCount: rows.count, varietyCount: varietyCount, average: average)
+        }
+        .sorted {
+            if $0.reviewCount != $1.reviewCount {
+                return $0.reviewCount > $1.reviewCount
+            }
+            return $0.average > $1.average
+        }
     }
 
     private var emptyAnalysis: some View {
@@ -357,6 +545,7 @@ private struct VarietyRanking: Identifiable {
     var variety: Variety
     var average: Double
     var count: Int
+    var latestDate: String
 }
 
 private struct TraitAverage: Identifiable {
@@ -379,6 +568,116 @@ private struct MonthlyReviewCount: Identifiable {
     var count: Int
 }
 
+private struct PrefectureAnalysisRow: Identifiable {
+    var id: String { prefecture }
+    var prefecture: String
+    var reviewCount: Int
+    var varietyCount: Int
+    var average: Double
+}
+
+private struct InsightLine: View {
+    var systemImage: String
+    var title: String
+    var value: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(AppTheme.strawberry)
+                .frame(width: 24)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppTheme.ink)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.muted)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+private struct AnalysisReviewCard: View {
+    @EnvironmentObject private var library: VarietyLibraryViewModel
+    var review: Review
+    var openVariety: () -> Void
+
+    var body: some View {
+        Button(action: openVariety) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    if let source = thumbnailSource {
+                        AsyncVarietyImage(
+                            image: library.loadedImage(for: source),
+                            url: library.imageURL(for: source),
+                            height: 72,
+                            contentMode: .fit
+                        )
+                        .frame(width: 72)
+                        .task(id: source.cacheKey) {
+                            await library.ensureImage(for: source)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(library.varietyName(review.varietyID))
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.ink)
+                        Text(review.tastedDate)
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    Spacer()
+                    CapsuleBadge(text: "\(review.overall)/10", tint: AppTheme.strawberry)
+                }
+
+                HStack(spacing: 6) {
+                    score("甘", review.sweetness)
+                    score("酸", review.sourness)
+                    score("香", review.aroma)
+                    score("食", review.texture)
+                    score("見", review.appearance)
+                }
+
+                if let place = review.purchasePlace, !place.isEmpty {
+                    Label(place, systemImage: "bag")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                }
+                if let price = review.priceJPY, price > 0 {
+                    Label("\(price)円", systemImage: "yensign.circle")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                }
+                if let comment = review.comment, !comment.isEmpty {
+                    Text(comment)
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(3)
+                }
+            }
+            .padding(12)
+            .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line.opacity(0.7)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var thumbnailSource: VarietyThumbnailSource? {
+        library.thumbnailSource(for: review.varietyID)
+    }
+
+    private func score(_ label: String, _ value: Int) -> some View {
+        Text("\(label)\(value)")
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.card, in: Capsule())
+            .foregroundStyle(AppTheme.ink)
+    }
+}
+
 private struct RankingRow: View {
     var rank: Int?
     var title: String
@@ -399,9 +698,11 @@ private struct RankingRow: View {
                 Text(title)
                     .font(.headline)
                     .foregroundStyle(AppTheme.ink)
+                    .lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(AppTheme.muted)
+                    .lineLimit(1)
             }
             Spacer()
             Text(value)

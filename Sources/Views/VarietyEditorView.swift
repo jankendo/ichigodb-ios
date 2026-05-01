@@ -128,7 +128,9 @@ struct VarietyEditorView: View {
             .navigationTitle(viewModel.isEditing ? "品種編集" : "品種登録")
             .navigationBarTitleDisplayMode(.large)
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.surface)
+            .dismissKeyboardOnTap()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("新規") {
@@ -314,7 +316,7 @@ struct VarietyEditorView: View {
             Button {
                 showParentSelector = true
             } label: {
-                Label("親品種を選ぶ", systemImage: "point.3.connected.trianglepath.dotted")
+                Label("親品種を選ぶ", systemImage: "leaf")
             }
             .buttonStyle(SecondaryButtonStyle())
 
@@ -366,6 +368,8 @@ private struct ParentSelectionSheet: View {
                 }
             }
             .searchable(text: $searchText, prompt: "親品種を検索")
+            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTap()
             .navigationTitle("親品種")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -443,6 +447,8 @@ private struct VarietyEditPickerSheet: View {
                 }
             }
             .searchable(text: $searchText, prompt: "品種名・別名・登録番号")
+            .scrollDismissesKeyboard(.interactively)
+            .dismissKeyboardOnTap()
             .navigationTitle("登録済み品種")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

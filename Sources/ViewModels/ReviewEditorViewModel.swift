@@ -89,6 +89,35 @@ final class ReviewEditorViewModel: ObservableObject {
         persistQueue()
     }
 
+    func addBatchToQueue(varietyIDs: [String], nameResolver: (String) -> String) {
+        let uniqueIDs = Array(Dictionary(grouping: varietyIDs.filter { !$0.isEmpty }, by: { $0 }).keys)
+            .sorted { nameResolver($0).localizedStandardCompare(nameResolver($1)) == .orderedAscending }
+        guard !uniqueIDs.isEmpty else {
+            errorMessage = "食べ比べする品種を選んでください。"
+            return
+        }
+        guard selectedImages.isEmpty else {
+            errorMessage = "一括メモでは画像を保持できません。画像付き評価は1件ずつ正式登録してください。"
+            return
+        }
+
+        let items = uniqueIDs.map { varietyID -> QueuedReviewDraft in
+            var copy = draft
+            copy.id = nil
+            copy.varietyID = varietyID
+            return QueuedReviewDraft(draft: copy, varietyName: nameResolver(varietyID))
+        }
+        queuedDrafts.insert(contentsOf: items, at: 0)
+        let keptDate = draft.tastedDate
+        draft = ReviewDraft()
+        draft.tastedDate = keptDate
+        selectedImages = []
+        message = "\(items.count)件を食べ比べメモに追加しました。メモ画面からまとめて正式登録できます。"
+        errorMessage = nil
+        persistDraft()
+        persistQueue()
+    }
+
     func loadQueuedDraft(_ item: QueuedReviewDraft) {
         draft = item.draft
         queuedDrafts.removeAll { $0.id == item.id }

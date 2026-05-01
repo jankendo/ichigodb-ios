@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 
 struct VarietyParentLink: Identifiable, Codable, Hashable {
     var id: String
@@ -18,34 +17,5 @@ struct VarietyParentLink: Identifiable, Codable, Hashable {
         case crossedYear = "crossed_year"
         case note
         case createdAt = "created_at"
-    }
-}
-
-struct PedigreeNode: Identifiable {
-    var id: String
-    var name: String
-    var point: CGPoint = .zero
-    var layer: Int = 0
-}
-
-struct PedigreeEdge: Identifiable, Hashable {
-    var id: String { "\(parentID)->\(childID)" }
-    var parentID: String
-    var childID: String
-}
-
-enum PedigreeDirection: String, CaseIterable, Identifiable {
-    case ancestors
-    case descendants
-    case both
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .ancestors: "祖先"
-        case .descendants: "子孫"
-        case .both: "祖先＋子孫"
-        }
     }
 }

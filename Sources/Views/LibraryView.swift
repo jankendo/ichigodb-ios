@@ -48,6 +48,7 @@ struct LibraryView: View {
             .searchable(text: $library.searchText, prompt: "品種名・特徴")
             .toolbar { refreshToolbar }
             .overlay { loadingOverlay }
+            .dismissKeyboardOnTap()
             .navigationDestination(for: String.self) { id in
                 if let variety = library.varieties.first(where: { $0.id == id }) {
                     detail(for: variety)
@@ -69,6 +70,7 @@ struct LibraryView: View {
             .searchable(text: $library.searchText, prompt: "検索")
             .toolbar { refreshToolbar }
             .overlay { loadingOverlay }
+            .dismissKeyboardOnTap()
         } detail: {
             if let selected = selectedVariety {
                 NavigationStack {
@@ -239,6 +241,7 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { await library.reload() }
     }
 
@@ -261,6 +264,7 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { await library.reload() }
     }
 
@@ -319,15 +323,14 @@ private struct VarietyRow: View {
     var body: some View {
         HStack(spacing: 12) {
             AsyncVarietyImage(
-                image: library.loadedImage(bucket: "variety-images", path: primaryImage?.storagePath),
-                url: library.imageURL(for: primaryImage),
+                image: library.loadedImage(for: thumbnailSource),
+                url: library.imageURL(for: thumbnailSource),
                 height: 84,
                 contentMode: .fit
             )
                 .frame(width: 84)
-                .task(id: primaryImage?.storagePath) {
-                    guard let primaryImage else { return }
-                    await library.ensureImage(bucket: "variety-images", path: primaryImage.storagePath)
+                .task(id: thumbnailSource?.cacheKey) {
+                    await library.ensureImage(for: thumbnailSource)
                 }
                 .accessibilityLabel("\(variety.name)の画像")
 
@@ -374,8 +377,8 @@ private struct VarietyRow: View {
         )
     }
 
-    private var primaryImage: VarietyImage? {
-        library.primaryImage(for: variety.id)
+    private var thumbnailSource: VarietyThumbnailSource? {
+        library.thumbnailSource(for: variety.id)
     }
 
     private var summary: String {
@@ -454,24 +457,27 @@ private struct VarietyImageGallery: View {
 
     var body: some View {
         Group {
-            if images.isEmpty {
+            if sources.isEmpty {
                 AsyncVarietyImage(height: height)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
-                        ForEach(images) { image in
+                        ForEach(sources, id: \.cacheKey) { source in
                             ZStack(alignment: .topLeading) {
                                 AsyncVarietyImage(
-                                    image: library.loadedImage(bucket: "variety-images", path: image.storagePath),
-                                    url: library.imageURL(bucket: "variety-images", path: image.storagePath),
+                                    image: library.loadedImage(for: source),
+                                    url: library.imageURL(for: source),
                                     height: height,
                                     contentMode: .fit
                                 )
                                 .frame(width: min(520, max(260, height * 1.28)))
-                                .task(id: image.storagePath) {
-                                    await library.ensureImage(bucket: "variety-images", path: image.storagePath)
+                                .task(id: source.cacheKey) {
+                                    await library.ensureImage(for: source)
                                 }
-                                if image.isPrimary {
+                                if source.bucket == "review-images" {
+                                    CapsuleBadge(text: "評価写真", tint: AppTheme.gold)
+                                        .padding(10)
+                                } else if isPrimaryVarietyImage(source) {
                                     CapsuleBadge(text: "メイン", tint: AppTheme.strawberry)
                                         .padding(10)
                                 }
@@ -483,8 +489,13 @@ private struct VarietyImageGallery: View {
         }
     }
 
-    private var images: [VarietyImage] {
-        library.images(for: varietyID)
+    private var sources: [VarietyThumbnailSource] {
+        library.gallerySources(for: varietyID)
+    }
+
+    private func isPrimaryVarietyImage(_ source: VarietyThumbnailSource) -> Bool {
+        guard source.bucket == "variety-images" else { return false }
+        return library.primaryImage(for: varietyID)?.storagePath == source.path
     }
 }
 
@@ -538,6 +549,8 @@ struct VarietyDetailView: View {
             .frame(maxWidth: 860, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .dismissKeyboardOnTap()
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {
                 Button("評価する", action: onReview)

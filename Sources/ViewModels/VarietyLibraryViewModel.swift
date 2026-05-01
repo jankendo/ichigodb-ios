@@ -44,6 +44,15 @@ enum VarietySortOption: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+struct VarietyThumbnailSource: Hashable {
+    var bucket: String
+    var path: String
+
+    var cacheKey: String {
+        "\(bucket)/\(path)"
+    }
+}
+
 @MainActor
 final class VarietyLibraryViewModel: ObservableObject {
     @Published var varieties: [Variety] = []
@@ -205,6 +214,47 @@ final class VarietyLibraryViewModel: ObservableObject {
         return images.first(where: \.isPrimary) ?? images.first
     }
 
+    func latestReviewImage(for varietyID: String) -> ReviewImage? {
+        for review in reviews(for: varietyID) {
+            if let image = reviewImages(for: review.id).max(by: {
+                ($0.createdAt ?? "") < ($1.createdAt ?? "")
+            }) {
+                return image
+            }
+        }
+        return nil
+    }
+
+    func thumbnailSource(for varietyID: String) -> VarietyThumbnailSource? {
+        if let image = latestReviewImage(for: varietyID) {
+            return VarietyThumbnailSource(bucket: "review-images", path: image.storagePath)
+        }
+        if let image = primaryImage(for: varietyID) {
+            return VarietyThumbnailSource(bucket: "variety-images", path: image.storagePath)
+        }
+        return nil
+    }
+
+    func gallerySources(for varietyID: String) -> [VarietyThumbnailSource] {
+        let reviewSources = reviews(for: varietyID)
+            .flatMap { review in
+                reviewImages(for: review.id)
+                    .sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }
+                    .map { VarietyThumbnailSource(bucket: "review-images", path: $0.storagePath) }
+            }
+        let varietySources = images(for: varietyID)
+            .map { VarietyThumbnailSource(bucket: "variety-images", path: $0.storagePath) }
+
+        var seen = Set<String>()
+        return (reviewSources + varietySources).filter { source in
+            if seen.contains(source.cacheKey) {
+                return false
+            }
+            seen.insert(source.cacheKey)
+            return true
+        }
+    }
+
     func images(for varietyID: String) -> [VarietyImage] {
         varietyImages
             .filter { $0.varietyID == varietyID }
@@ -249,6 +299,11 @@ final class VarietyLibraryViewModel: ObservableObject {
         return imageURL(bucket: "variety-images", path: image.storagePath)
     }
 
+    func imageURL(for source: VarietyThumbnailSource?) -> URL? {
+        guard let source else { return nil }
+        return imageURL(bucket: source.bucket, path: source.path)
+    }
+
     func imageURL(bucket: String, path: String) -> URL? {
         signedImageURLs[cacheKey(bucket: bucket, path: path)]
     }
@@ -256,6 +311,11 @@ final class VarietyLibraryViewModel: ObservableObject {
     func loadedImage(bucket: String, path: String?) -> UIImage? {
         guard let path else { return nil }
         return loadedImages[cacheKey(bucket: bucket, path: path)]
+    }
+
+    func loadedImage(for source: VarietyThumbnailSource?) -> UIImage? {
+        guard let source else { return nil }
+        return loadedImage(bucket: source.bucket, path: source.path)
     }
 
     func ensureSignedURL(for image: VarietyImage) async {
@@ -287,6 +347,11 @@ final class VarietyLibraryViewModel: ObservableObject {
         }
     }
 
+    func ensureImage(for source: VarietyThumbnailSource?) async {
+        guard let source else { return }
+        await ensureImage(bucket: source.bucket, path: source.path)
+    }
+
     func clearCachedImage(bucket: String, path: String) {
         let key = cacheKey(bucket: bucket, path: path)
         loadedImages[key] = nil
@@ -305,9 +370,9 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     private func preloadPrimaryImageURLs() async {
-        let firstImages = activeVarieties.compactMap { primaryImage(for: $0.id) }.prefix(80)
+        let firstImages = activeVarieties.compactMap { thumbnailSource(for: $0.id) }.prefix(80)
         for image in firstImages {
-            await ensureImage(bucket: "variety-images", path: image.storagePath)
+            await ensureImage(for: image)
         }
     }
 

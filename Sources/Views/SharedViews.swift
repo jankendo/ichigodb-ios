@@ -2,6 +2,22 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+extension UIApplication {
+    func dismissActiveKeyboard() {
+        sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+extension View {
+    func dismissKeyboardOnTap() -> some View {
+        simultaneousGesture(
+            TapGesture().onEnded {
+                UIApplication.shared.dismissActiveKeyboard()
+            }
+        )
+    }
+}
+
 struct AsyncVarietyImage: View {
     var image: UIImage?
     var url: URL?
