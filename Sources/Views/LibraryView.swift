@@ -319,6 +319,10 @@ struct LibraryView: View {
             onReview: {
                 reviewVM.reset(keeping: variety.id)
                 selectedTab = .reviewEditor
+            },
+            onEditReview: { review in
+                reviewVM.edit(review)
+                selectedTab = .reviewEditor
             }
         )
     }
@@ -401,6 +405,7 @@ private struct VarietyRow: View {
 private struct ReviewHistoryRow: View {
     @EnvironmentObject private var library: VarietyLibraryViewModel
     var review: Review
+    var onEdit: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -416,7 +421,15 @@ private struct ReviewHistoryRow: View {
                     }
                 }
                 Spacer()
-                CapsuleBadge(text: "\(review.overall)/10", tint: AppTheme.strawberry)
+                VStack(alignment: .trailing, spacing: 8) {
+                    CapsuleBadge(text: "\(review.overall)/10", tint: AppTheme.strawberry)
+                    Button(action: onEdit) {
+                        Label("編集", systemImage: "pencil")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
 
             HStack(spacing: 6) {
@@ -514,6 +527,9 @@ struct VarietyDetailView: View {
     var variety: Variety
     var onEdit: () -> Void
     var onReview: () -> Void
+    var onEditReview: (Review) -> Void
+    @State private var sharePayload: SharePayload?
+    @State private var isPreparingShare = false
 
     var body: some View {
         ScrollView {
@@ -563,11 +579,32 @@ struct VarietyDetailView: View {
             HStack(spacing: 12) {
                 Button("評価する", action: onReview)
                     .buttonStyle(PrimaryButtonStyle())
+                Button {
+                    prepareShare()
+                } label: {
+                    Label(isPreparingShare ? "準備中" : "共有", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(isPreparingShare)
                 Button("編集", action: onEdit)
                     .buttonStyle(SecondaryButtonStyle())
             }
             .padding()
             .background(.thinMaterial)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    prepareShare()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(isPreparingShare)
+                .accessibilityLabel("品種を共有")
+            }
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityShareSheet(items: payload.items)
         }
         .navigationTitle(variety.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -678,7 +715,9 @@ struct VarietyDetailView: View {
                     .foregroundStyle(AppTheme.muted)
             } else {
                 ForEach(displayedReviews) { review in
-                    ReviewHistoryRow(review: review)
+                    ReviewHistoryRow(review: review) {
+                        onEditReview(review)
+                    }
                     if review.id != displayedReviews.last?.id {
                         Divider()
                     }
@@ -707,5 +746,32 @@ struct VarietyDetailView: View {
             Spacer()
         }
         .font(.subheadline)
+    }
+
+    @MainActor
+    private func prepareShare() {
+        guard !isPreparingShare else { return }
+        isPreparingShare = true
+        Task { @MainActor in
+            defer { isPreparingShare = false }
+            let source = library.thumbnailSource(for: variety.id)
+            if let source {
+                await library.ensureImage(for: source)
+            }
+            let shareText = VarietyShareBuilder.makeText(
+                variety: variety,
+                reviews: library.reviews(for: variety.id),
+                reviewCount: library.reviewCount(for: variety.id),
+                averageOverall: library.averageOverall(for: variety.id),
+                parents: library.parents(for: variety.id),
+                children: library.children(for: variety.id),
+                isDiscovered: library.discoveredIDs.contains(variety.id)
+            )
+            var items: [Any] = [shareText]
+            if let image = library.loadedImage(for: source) {
+                items.append(image)
+            }
+            sharePayload = SharePayload(items: items)
+        }
     }
 }

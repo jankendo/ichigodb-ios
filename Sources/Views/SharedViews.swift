@@ -21,6 +21,36 @@ extension View {
     }
 }
 
+struct SharePayload: Identifiable {
+    let id = UUID()
+    let items: [Any]
+}
+
+struct ActivityShareSheet: UIViewControllerRepresentable {
+    var items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+struct SelectionResultFooter: View {
+    var hiddenCount: Int
+    var queryIsEmpty: Bool
+
+    var body: some View {
+        if hiddenCount > 0 {
+            Text(queryIsEmpty ? "さらに\(hiddenCount)件あります。品種名・別名・登録番号で絞り込めます。" : "さらに\(hiddenCount)件あります。検索語を追加すると絞り込めます。")
+                .font(.caption)
+                .foregroundStyle(AppTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        }
+    }
+}
+
 struct AsyncVarietyImage: View {
     var image: UIImage?
     var url: URL?

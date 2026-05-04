@@ -38,6 +38,7 @@ final class ReviewEditorViewModel: ObservableObject {
     @Published var historyDateTo = Date()
     @Published var message: String?
     @Published var errorMessage: String?
+    @Published var entryRequestID = UUID()
 
     private let repository: IchigoRepository
     private let draftStore: DraftStore
@@ -74,6 +75,7 @@ final class ReviewEditorViewModel: ObservableObject {
         duplicateReviewID = nil
         message = nil
         errorMessage = nil
+        entryRequestID = UUID()
         persistDraft()
     }
 
@@ -84,6 +86,7 @@ final class ReviewEditorViewModel: ObservableObject {
         duplicateReviewID = nil
         message = "履歴から評価を編集中です。"
         errorMessage = nil
+        entryRequestID = UUID()
         persistDraft()
     }
 

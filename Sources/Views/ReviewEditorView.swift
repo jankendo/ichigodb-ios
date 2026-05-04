@@ -17,6 +17,7 @@ struct ReviewEditorView: View {
     @State private var mode: ReviewScreenMode = .entry
     @State private var showVarietyPicker = false
     @State private var showBatchPicker = false
+    @State private var showHistoryVarietyPicker = false
     @State private var batchSelection = Set<String>()
 
     var body: some View {
@@ -66,6 +67,15 @@ struct ReviewEditorView: View {
                     }
                 )
             }
+            .sheet(isPresented: $showHistoryVarietyPicker) {
+                VarietyPickerSheet(
+                    varieties: library.activeVarieties,
+                    selection: $viewModel.historyVarietyID,
+                    emptyTitle: "すべて",
+                    allowsRegistration: false,
+                    onRegister: { _ in }
+                )
+            }
             .safeAreaInset(edge: .bottom) {
                 bottomActionBar
             }
@@ -90,6 +100,9 @@ struct ReviewEditorView: View {
             }
             .onChange(of: viewModel.sessionDraft) { _ in
                 viewModel.persistDraft()
+            }
+            .onChange(of: viewModel.entryRequestID) { _ in
+                mode = .entry
             }
         }
     }
@@ -344,13 +357,18 @@ struct ReviewEditorView: View {
 
     private var historyFilters: some View {
         VStack(spacing: 12) {
-            Picker("履歴品種", selection: $viewModel.historyVarietyID) {
-                Text("すべて").tag("")
-                ForEach(library.activeVarieties) { variety in
-                    Text(variety.name).tag(variety.id)
+            Button {
+                showHistoryVarietyPicker = true
+            } label: {
+                HStack {
+                    Label(historyVarietyName, systemImage: "text.magnifyingglass")
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
                 }
             }
-            .pickerStyle(.menu)
+            .buttonStyle(.plain)
 
             DatePicker("開始日", selection: $viewModel.historyDateFrom, displayedComponents: .date)
             DatePicker("終了日", selection: $viewModel.historyDateTo, in: ...Date(), displayedComponents: .date)
@@ -375,6 +393,10 @@ struct ReviewEditorView: View {
 
     private var selectedVarietyName: String {
         viewModel.draft.varietyID.isEmpty ? "品種を選択" : library.varietyName(viewModel.draft.varietyID)
+    }
+
+    private var historyVarietyName: String {
+        viewModel.historyVarietyID.isEmpty ? "履歴品種: すべて" : "履歴品種: \(library.varietyName(viewModel.historyVarietyID))"
     }
 
     private var selectedBatchIDs: [String] {
@@ -584,12 +606,18 @@ private struct QueuedReviewCard: View {
 }
 
 private struct MultiVarietyPickerSheet: View {
-    var varieties: [Variety]
+    private let entries: [VarietySearchIndexEntry]
     @Binding var selection: Set<String>
     var onRegister: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
+
+    init(varieties: [Variety], selection: Binding<Set<String>>, onRegister: @escaping (String) -> Void) {
+        self.entries = VarietySearchIndexEntry.makeSorted(from: varieties)
+        self._selection = selection
+        self.onRegister = onRegister
+    }
 
     var body: some View {
         NavigationStack {
@@ -624,7 +652,8 @@ private struct MultiVarietyPickerSheet: View {
                     }
                     .buttonStyle(.plain)
                 } else {
-                    ForEach(filteredVarieties) { variety in
+                    ForEach(searchResult.rows) { entry in
+                        let variety = entry.variety
                         Button {
                             toggle(variety.id)
                         } label: {
@@ -645,6 +674,7 @@ private struct MultiVarietyPickerSheet: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    SelectionResultFooter(hiddenCount: searchResult.hiddenCount, queryIsEmpty: cleanedSearchText.isEmpty)
                 }
             }
             .listStyle(.plain)
@@ -674,15 +704,18 @@ private struct MultiVarietyPickerSheet: View {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var filteredVarieties: [Variety] {
-        varieties
-            .filter { $0.matchesSearch(searchText) }
-            .sorted {
-                if $0.isExactMatch(for: searchText) != $1.isExactMatch(for: searchText) {
-                    return $0.isExactMatch(for: searchText)
-                }
-                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-            }
+    private var searchResult: VarietySelectionSearchResult {
+        VarietySelectionSearch.result(
+            entries: entries,
+            query: searchText,
+            selectedIDs: selection,
+            emptyLimit: 70,
+            searchLimit: 120
+        )
+    }
+
+    private var filteredVarieties: [VarietySearchIndexEntry] {
+        searchResult.rows
     }
 
     private func toggle(_ id: String) {
@@ -695,12 +728,28 @@ private struct MultiVarietyPickerSheet: View {
 }
 
 private struct VarietyPickerSheet: View {
-    var varieties: [Variety]
+    private let entries: [VarietySearchIndexEntry]
     @Binding var selection: String
+    var emptyTitle: String
+    var allowsRegistration: Bool
     var onRegister: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
+
+    init(
+        varieties: [Variety],
+        selection: Binding<String>,
+        emptyTitle: String = "未選択",
+        allowsRegistration: Bool = true,
+        onRegister: @escaping (String) -> Void
+    ) {
+        self.entries = VarietySearchIndexEntry.makeSorted(from: varieties)
+        self._selection = selection
+        self.emptyTitle = emptyTitle
+        self.allowsRegistration = allowsRegistration
+        self.onRegister = onRegister
+    }
 
     var body: some View {
         NavigationStack {
@@ -710,25 +759,28 @@ private struct VarietyPickerSheet: View {
                     selection = ""
                     dismiss()
                 } label: {
-                    Label("未選択", systemImage: selection.isEmpty ? "checkmark.circle.fill" : "circle")
+                    Label(emptyTitle, systemImage: selection.isEmpty ? "checkmark.circle.fill" : "circle")
                 }
                 .buttonStyle(.plain)
                 if filteredVarieties.isEmpty && !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView(
                         "登録済み品種が見つかりません",
                         systemImage: "plus.magnifyingglass",
-                        description: Text("このまま品種登録へ進めます。")
+                        description: Text(allowsRegistration ? "このまま品種登録へ進めます。" : "検索語を変えてください。")
                     )
-                    Button {
-                        dismissSearch()
-                        onRegister(cleanedSearchText)
-                        dismiss()
-                    } label: {
-                        Label("「\(cleanedSearchText)」を品種登録する", systemImage: "plus.square")
+                    if allowsRegistration {
+                        Button {
+                            dismissSearch()
+                            onRegister(cleanedSearchText)
+                            dismiss()
+                        } label: {
+                            Label("「\(cleanedSearchText)」を品種登録する", systemImage: "plus.square")
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 } else {
-                    ForEach(filteredVarieties) { variety in
+                    ForEach(searchResult.rows) { entry in
+                        let variety = entry.variety
                         Button {
                             dismissSearch()
                             selection = variety.id
@@ -752,6 +804,7 @@ private struct VarietyPickerSheet: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    SelectionResultFooter(hiddenCount: searchResult.hiddenCount, queryIsEmpty: cleanedSearchText.isEmpty)
                 }
             }
             .listStyle(.plain)
@@ -765,13 +818,15 @@ private struct VarietyPickerSheet: View {
                         dismiss()
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("登録") {
-                        dismissSearch()
-                        onRegister(cleanedSearchText)
-                        dismiss()
+                if allowsRegistration {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("登録") {
+                            dismissSearch()
+                            onRegister(cleanedSearchText)
+                            dismiss()
+                        }
+                        .disabled(cleanedSearchText.isEmpty)
                     }
-                    .disabled(cleanedSearchText.isEmpty)
                 }
             }
             .keyboardDoneToolbar()
@@ -782,15 +837,18 @@ private struct VarietyPickerSheet: View {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var filteredVarieties: [Variety] {
-        varieties
-            .filter { $0.matchesSearch(searchText) }
-            .sorted {
-                if $0.isExactMatch(for: searchText) != $1.isExactMatch(for: searchText) {
-                    return $0.isExactMatch(for: searchText)
-                }
-                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-            }
+    private var searchResult: VarietySelectionSearchResult {
+        VarietySelectionSearch.result(
+            entries: entries,
+            query: searchText,
+            selectedIDs: selection.isEmpty ? [] : [selection],
+            emptyLimit: 70,
+            searchLimit: 120
+        )
+    }
+
+    private var filteredVarieties: [VarietySearchIndexEntry] {
+        searchResult.rows
     }
 }
 

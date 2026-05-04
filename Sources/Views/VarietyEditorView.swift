@@ -342,16 +342,22 @@ struct VarietyEditorView: View {
 }
 
 private struct ParentSelectionSheet: View {
-    var candidates: [Variety]
+    private let entries: [VarietySearchIndexEntry]
     @Binding var selectedIDs: [String]
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
 
+    init(candidates: [Variety], selectedIDs: Binding<[String]>) {
+        self.entries = VarietySearchIndexEntry.makeSorted(from: candidates)
+        self._selectedIDs = selectedIDs
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                ForEach(filteredCandidates) { variety in
+                ForEach(searchResult.rows) { entry in
+                    let variety = entry.variety
                     Button {
                         toggle(variety.id)
                     } label: {
@@ -375,6 +381,7 @@ private struct ParentSelectionSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
+                SelectionResultFooter(hiddenCount: searchResult.hiddenCount, queryIsEmpty: cleanedSearchText.isEmpty)
             }
             .searchable(text: $searchText, prompt: "親品種を検索")
             .scrollDismissesKeyboard(.interactively)
@@ -397,8 +404,18 @@ private struct ParentSelectionSheet: View {
         }
     }
 
-    private var filteredCandidates: [Variety] {
-        candidates.filter { $0.matchesSearch(searchText) }
+    private var cleanedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var searchResult: VarietySelectionSearchResult {
+        VarietySelectionSearch.result(
+            entries: entries,
+            query: searchText,
+            selectedIDs: Set(selectedIDs),
+            emptyLimit: 70,
+            searchLimit: 120
+        )
     }
 
     private func toggle(_ id: String) {
@@ -411,12 +428,18 @@ private struct ParentSelectionSheet: View {
 }
 
 private struct VarietyEditPickerSheet: View {
-    var varieties: [Variety]
+    private let entries: [VarietySearchIndexEntry]
     @Binding var selectedID: String
     var onSelect: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
+
+    init(varieties: [Variety], selectedID: Binding<String>, onSelect: @escaping (String) -> Void) {
+        self.entries = VarietySearchIndexEntry.makeSorted(from: varieties)
+        self._selectedID = selectedID
+        self.onSelect = onSelect
+    }
 
     var body: some View {
         NavigationStack {
@@ -438,7 +461,8 @@ private struct VarietyEditPickerSheet: View {
                         description: Text("表記を変えるか、このまま新規登録してください。")
                     )
                 } else {
-                    ForEach(filteredVarieties) { variety in
+                    ForEach(searchResult.rows) { entry in
+                        let variety = entry.variety
                         Button {
                             dismissSearch()
                             selectedID = variety.id
@@ -465,6 +489,7 @@ private struct VarietyEditPickerSheet: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    SelectionResultFooter(hiddenCount: searchResult.hiddenCount, queryIsEmpty: cleanedSearchText.isEmpty)
                 }
             }
             .searchable(text: $searchText, prompt: "品種名・別名・登録番号")
@@ -482,14 +507,22 @@ private struct VarietyEditPickerSheet: View {
         }
     }
 
-    private var filteredVarieties: [Variety] {
-        varieties.filter { $0.matchesSearch(searchText) }
-            .sorted {
-                if $0.isExactMatch(for: searchText) != $1.isExactMatch(for: searchText) {
-                    return $0.isExactMatch(for: searchText)
-                }
-                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-            }
+    private var cleanedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var searchResult: VarietySelectionSearchResult {
+        VarietySelectionSearch.result(
+            entries: entries,
+            query: searchText,
+            selectedIDs: selectedID.isEmpty ? [] : [selectedID],
+            emptyLimit: 70,
+            searchLimit: 120
+        )
+    }
+
+    private var filteredVarieties: [VarietySearchIndexEntry] {
+        searchResult.rows
     }
 
     private func subtitle(for variety: Variety) -> String {
