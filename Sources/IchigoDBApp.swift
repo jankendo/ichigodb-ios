@@ -65,7 +65,7 @@ private struct ConfiguredRootView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .environmentObject(libraryVM)
         .environmentObject(uploadQueue)
-        .onChange(of: selectedTab) { _ in
+        .onChange(of: selectedTab) {
             UIApplication.shared.dismissActiveKeyboard()
         }
         .task {

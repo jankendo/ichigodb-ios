@@ -48,7 +48,8 @@ final class IchigoDataStore: ObservableObject {
     func refresh() async {
         refreshTask?.cancel()
         let task = Task { [weak self] in
-            await self?.performRefresh()
+            guard let self else { return }
+            await self.performRefresh()
         }
         refreshTask = task
         await task.value
