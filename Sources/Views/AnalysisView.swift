@@ -55,7 +55,6 @@ struct AnalysisView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .dismissKeyboardOnTap()
             }
             .navigationTitle("いちご分析")
             .navigationBarTitleDisplayMode(.inline)

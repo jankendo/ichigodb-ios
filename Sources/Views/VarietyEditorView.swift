@@ -130,7 +130,6 @@ struct VarietyEditorView: View {
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.surface)
-            .dismissKeyboardOnTap()
             .keyboardDoneToolbar()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -340,6 +339,7 @@ private struct ParentSelectionSheet: View {
     var candidates: [Variety]
     @Binding var selectedIDs: [String]
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
 
     var body: some View {
@@ -365,21 +365,29 @@ private struct ParentSelectionSheet: View {
                                     .foregroundStyle(AppTheme.strawberry)
                             }
                         }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .searchable(text: $searchText, prompt: "親品種を検索")
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .navigationTitle("親品種")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完了") { dismiss() }
+                    Button("完了") {
+                        dismissSearch()
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("クリア") { selectedIDs = [] }
+                    Button("クリア") {
+                        dismissSearch()
+                        selectedIDs = []
+                    }
                 }
             }
+            .keyboardDoneToolbar()
         }
     }
 
@@ -401,18 +409,21 @@ private struct VarietyEditPickerSheet: View {
     @Binding var selectedID: String
     var onSelect: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
 
     var body: some View {
         NavigationStack {
             List {
                 Button {
+                    dismissSearch()
                     selectedID = ""
                     onSelect("")
                     dismiss()
                 } label: {
                     Label("新規登録", systemImage: selectedID.isEmpty ? "checkmark.circle.fill" : "plus.circle")
                 }
+                .buttonStyle(.plain)
 
                 if filteredVarieties.isEmpty {
                     ContentUnavailableView(
@@ -423,6 +434,7 @@ private struct VarietyEditPickerSheet: View {
                 } else {
                     ForEach(filteredVarieties) { variety in
                         Button {
+                            dismissSearch()
                             selectedID = variety.id
                             onSelect(variety.id)
                             dismiss()
@@ -443,19 +455,24 @@ private struct VarietyEditPickerSheet: View {
                                         .foregroundStyle(AppTheme.strawberry)
                                 }
                             }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
             .searchable(text: $searchText, prompt: "品種名・別名・登録番号")
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .navigationTitle("登録済み品種")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button("閉じる") {
+                        dismissSearch()
+                        dismiss()
+                    }
                 }
             }
+            .keyboardDoneToolbar()
         }
     }
 

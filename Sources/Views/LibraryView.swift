@@ -559,7 +559,6 @@ struct VarietyDetailView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {
                 Button("評価する", action: onReview)

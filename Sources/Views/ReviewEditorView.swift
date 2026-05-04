@@ -222,7 +222,6 @@ struct ReviewEditorView: View {
         }
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .background(AppTheme.surface)
     }
 
@@ -266,7 +265,6 @@ struct ReviewEditorView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
     }
 
     private var historyList: some View {
@@ -301,7 +299,6 @@ struct ReviewEditorView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 
@@ -329,7 +326,6 @@ struct ReviewEditorView: View {
         }
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)
-        .dismissKeyboardOnTap()
         .refreshable { await library.reload() }
     }
 
@@ -575,6 +571,7 @@ private struct MultiVarietyPickerSheet: View {
     @Binding var selection: Set<String>
     var onRegister: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
 
     var body: some View {
@@ -602,11 +599,13 @@ private struct MultiVarietyPickerSheet: View {
                         description: Text("品種登録してから評価へ戻れます。")
                     )
                     Button {
+                        dismissSearch()
                         onRegister(cleanedSearchText)
                         dismiss()
                     } label: {
                         Label("「\(cleanedSearchText)」を品種登録する", systemImage: "plus.square")
                     }
+                    .buttonStyle(.plain)
                 } else {
                     ForEach(filteredVarieties) { variety in
                         Button {
@@ -625,6 +624,7 @@ private struct MultiVarietyPickerSheet: View {
                                 }
                                 Spacer()
                             }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -633,17 +633,23 @@ private struct MultiVarietyPickerSheet: View {
             .listStyle(.plain)
             .searchable(text: $searchText, prompt: "品種名・別名で検索")
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .navigationTitle("食べ比べ品種")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button("閉じる") {
+                        dismissSearch()
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("決定") { dismiss() }
+                    Button("決定") {
+                        dismissSearch()
+                        dismiss()
+                    }
                         .disabled(selection.isEmpty)
                 }
             }
+            .keyboardDoneToolbar()
         }
     }
 
@@ -676,17 +682,20 @@ private struct VarietyPickerSheet: View {
     @Binding var selection: String
     var onRegister: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismissSearch) private var dismissSearch
     @State private var searchText = ""
 
     var body: some View {
         NavigationStack {
             List {
                 Button {
+                    dismissSearch()
                     selection = ""
                     dismiss()
                 } label: {
                     Label("未選択", systemImage: selection.isEmpty ? "checkmark.circle.fill" : "circle")
                 }
+                .buttonStyle(.plain)
                 if filteredVarieties.isEmpty && !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ContentUnavailableView(
                         "登録済み品種が見つかりません",
@@ -694,14 +703,17 @@ private struct VarietyPickerSheet: View {
                         description: Text("このまま品種登録へ進めます。")
                     )
                     Button {
-                        onRegister(searchText.trimmingCharacters(in: .whitespacesAndNewlines))
+                        dismissSearch()
+                        onRegister(cleanedSearchText)
                         dismiss()
                     } label: {
-                        Label("「\(searchText)」を品種登録する", systemImage: "plus.square")
+                        Label("「\(cleanedSearchText)」を品種登録する", systemImage: "plus.square")
                     }
+                    .buttonStyle(.plain)
                 } else {
                     ForEach(filteredVarieties) { variety in
                         Button {
+                            dismissSearch()
                             selection = variety.id
                             dismiss()
                         } label: {
@@ -719,32 +731,49 @@ private struct VarietyPickerSheet: View {
                                         .foregroundStyle(AppTheme.strawberry)
                                 }
                             }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
             .listStyle(.plain)
             .searchable(text: $searchText, prompt: "品種名・別名で検索")
             .scrollDismissesKeyboard(.interactively)
-            .dismissKeyboardOnTap()
             .navigationTitle("品種を選択")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button("閉じる") {
+                        dismissSearch()
+                        dismiss()
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("登録") {
-                        onRegister(searchText.trimmingCharacters(in: .whitespacesAndNewlines))
+                        dismissSearch()
+                        onRegister(cleanedSearchText)
                         dismiss()
                     }
-                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(cleanedSearchText.isEmpty)
                 }
             }
+            .keyboardDoneToolbar()
         }
     }
 
+    private var cleanedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var filteredVarieties: [Variety] {
-        varieties.filter { $0.matchesSearch(searchText) }
+        varieties
+            .filter { $0.matchesSearch(searchText) }
+            .sorted {
+                if $0.isExactMatch(for: searchText) != $1.isExactMatch(for: searchText) {
+                    return $0.isExactMatch(for: searchText)
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
     }
 }
 

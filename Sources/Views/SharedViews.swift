@@ -9,14 +9,6 @@ extension UIApplication {
 }
 
 extension View {
-    func dismissKeyboardOnTap() -> some View {
-        simultaneousGesture(
-            TapGesture().onEnded {
-                UIApplication.shared.dismissActiveKeyboard()
-            }
-        )
-    }
-
     func keyboardDoneToolbar() -> some View {
         toolbar {
             ToolbarItemGroup(placement: .keyboard) {
