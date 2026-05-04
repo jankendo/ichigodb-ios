@@ -90,8 +90,8 @@ struct AnalysisView: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: 16) {
             LazyVGrid(columns: metricColumns, spacing: 10) {
-                MetricPill(title: "評価数", value: "\(reviews.count)")
-                MetricPill(title: "発見品種", value: "\(library.discoveredIDs.count)")
+                MetricPill(title: "評価数", value: "\(library.analysisSnapshot.reviewCount)")
+                MetricPill(title: "発見品種", value: "\(library.analysisSnapshot.discoveredCount)")
                 MetricPill(title: "平均点", value: overallAverageText)
                 MetricPill(title: "推し軸", value: strongestTrait?.label ?? "-")
             }
@@ -328,12 +328,23 @@ struct AnalysisView: View {
 
     private var valueHighlights: some View {
         analysisSection("コスパランキング", systemImage: "yensign.circle") {
-            let rows = valueScoreRows.prefix(8)
-            if rows.isEmpty {
+            let summaryRows = valueScoreSummaries.prefix(8)
+            let reviewRows = valueScoreRows.prefix(8)
+            if summaryRows.isEmpty && reviewRows.isEmpty {
                 Text("価格を入れると、満足度の高い購入メモが見えてきます。")
                     .foregroundStyle(AppTheme.muted)
+            } else if !summaryRows.isEmpty {
+                ForEach(Array(summaryRows)) { item in
+                    RankingRow(
+                        rank: nil,
+                        title: item.varietyName,
+                        subtitle: "\(Int(item.averagePriceJPY))円平均 / \(item.reviewCount)件",
+                        value: String(format: "%.2f", item.scorePer1000Yen),
+                        tint: AppTheme.gold
+                    )
+                }
             } else {
-                ForEach(Array(rows)) { review in
+                ForEach(Array(reviewRows)) { review in
                     RankingRow(
                         rank: nil,
                         title: library.varietyName(review.varietyID),
@@ -424,9 +435,8 @@ struct AnalysisView: View {
     }
 
     private var overallAverageText: String {
-        guard !reviews.isEmpty else { return "-" }
-        let average = Double(reviews.map(\.overall).reduce(0, +)) / Double(reviews.count)
-        return String(format: "%.1f", average)
+        guard library.analysisSnapshot.reviewCount > 0 else { return "-" }
+        return String(format: "%.1f", library.analysisSnapshot.averageOverall)
     }
 
     private var traitAverages: [TraitAverage] {
@@ -446,13 +456,29 @@ struct AnalysisView: View {
     }
 
     private var traitLeaders: [TraitLeader] {
-        [
+        let snapshot = library.analysisSnapshot.traitLeaders
+        let snapshotRows = [
+            traitLeader("甘味", snapshot.sweetness.first),
+            traitLeader("酸味", snapshot.sourness.first),
+            traitLeader("香り", snapshot.aroma.first),
+            traitLeader("食感", snapshot.texture.first),
+            traitLeader("見た目", snapshot.appearance.first)
+        ]
+        if snapshotRows.contains(where: { $0.value != nil }) {
+            return snapshotRows
+        }
+        return [
             traitLeader("甘味", keyPath: \.sweetness),
             traitLeader("酸味", keyPath: \.sourness),
             traitLeader("香り", keyPath: \.aroma),
             traitLeader("食感", keyPath: \.texture),
             traitLeader("見た目", keyPath: \.appearance)
         ]
+    }
+
+    private func traitLeader(_ label: String, _ row: TraitScoreSummary?) -> TraitLeader {
+        guard let row else { return TraitLeader(label: label, variety: nil, value: nil) }
+        return TraitLeader(label: label, variety: library.activeVarieties.first(where: { $0.id == row.varietyID }), value: row.averageScore)
     }
 
     private func traitLeader(_ label: String, keyPath: KeyPath<Review, Int>) -> TraitLeader {
@@ -468,6 +494,13 @@ struct AnalysisView: View {
     }
 
     private var varietyRankings: [VarietyRanking] {
+        if !library.analysisSnapshot.topOverall.isEmpty {
+            let varietiesByID = Dictionary(uniqueKeysWithValues: library.activeVarieties.map { ($0.id, $0) })
+            return library.analysisSnapshot.topOverall.enumerated().compactMap { index, row in
+                guard let variety = varietiesByID[row.varietyID] else { return nil }
+                return VarietyRanking(rank: index + 1, variety: variety, average: row.averageOverall, count: row.reviewCount, latestDate: row.latestReviewDate ?? "-")
+            }
+        }
         let grouped = Dictionary(grouping: reviews, by: \.varietyID)
         let rows: [(variety: Variety, average: Double, count: Int, latestDate: String)] = grouped.compactMap { id, rows in
             guard let variety = library.activeVarieties.first(where: { $0.id == id }), !rows.isEmpty else { return nil }
@@ -487,6 +520,11 @@ struct AnalysisView: View {
     }
 
     private var monthlyCounts: [MonthlyReviewCount] {
+        if !library.analysisSnapshot.monthly.isEmpty {
+            return Array(library.analysisSnapshot.monthly.prefix(8).reversed()).map {
+                MonthlyReviewCount(month: $0.month, count: $0.reviewCount)
+            }
+        }
         let grouped = Dictionary(grouping: reviews) { review in
             String(review.tastedDate.prefix(7))
         }
@@ -506,11 +544,20 @@ struct AnalysisView: View {
             .sorted { valueScore($0) > valueScore($1) }
     }
 
+    private var valueScoreSummaries: [CostPerformanceSummary] {
+        library.analysisSnapshot.costPerformance
+    }
+
     private func valueScore(_ review: Review) -> Double {
         Double(review.overall) / Double(max(review.priceJPY ?? 1, 1))
     }
 
     private var prefectureRows: [PrefectureAnalysisRow] {
+        if !library.analysisSnapshot.prefectures.isEmpty {
+            return library.analysisSnapshot.prefectures.map {
+                PrefectureAnalysisRow(prefecture: $0.prefecture, reviewCount: $0.reviewCount, varietyCount: $0.varietyCount, average: $0.averageOverall)
+            }
+        }
         let grouped = Dictionary(grouping: reviews) { review -> String in
             library.activeVarieties.first(where: { $0.id == review.varietyID })?.originPrefecture ?? "産地未設定"
         }

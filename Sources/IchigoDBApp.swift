@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 enum AppTab: Hashable {
+    case home
     case library
     case varietyEditor
     case reviewEditor
@@ -26,17 +27,24 @@ private struct ConfiguredRootView: View {
     @StateObject private var libraryVM: VarietyLibraryViewModel
     @StateObject private var editorVM: VarietyEditorViewModel
     @StateObject private var reviewVM: ReviewEditorViewModel
-    @State private var selectedTab: AppTab = .library
+    @StateObject private var uploadQueue: UploadQueue
+    @State private var selectedTab: AppTab = .home
 
     init(config: SupabaseConfig) {
         let repository = IchigoRepository(client: SupabaseClient(config: config))
-        _libraryVM = StateObject(wrappedValue: VarietyLibraryViewModel(repository: repository))
+        let dataStore = IchigoDataStore(repository: repository)
+        _libraryVM = StateObject(wrappedValue: VarietyLibraryViewModel(repository: repository, dataStore: dataStore))
         _editorVM = StateObject(wrappedValue: VarietyEditorViewModel(repository: repository))
         _reviewVM = StateObject(wrappedValue: ReviewEditorViewModel(repository: repository))
+        _uploadQueue = StateObject(wrappedValue: UploadQueue(repository: repository))
     }
 
     var body: some View {
         TabView(selection: $selectedTab) {
+            HomeView(editorVM: editorVM, reviewVM: reviewVM, selectedTab: $selectedTab)
+                .tabItem { Label("ホーム", systemImage: "house") }
+                .tag(AppTab.home)
+
             LibraryView(editorVM: editorVM, reviewVM: reviewVM, selectedTab: $selectedTab)
                 .tabItem { Label("図鑑", systemImage: "book.pages") }
                 .tag(AppTab.library)
@@ -56,6 +64,7 @@ private struct ConfiguredRootView: View {
         .tint(AppTheme.strawberry)
         .toolbarBackground(.visible, for: .tabBar)
         .environmentObject(libraryVM)
+        .environmentObject(uploadQueue)
         .onChange(of: selectedTab) { _ in
             UIApplication.shared.dismissActiveKeyboard()
         }

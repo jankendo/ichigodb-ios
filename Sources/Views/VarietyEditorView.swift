@@ -177,9 +177,14 @@ struct VarietyEditorView: View {
             .safeAreaInset(edge: .bottom) {
                 Button {
                     Task {
+                        let hadImages = !viewModel.selectedImages.isEmpty
+                        let hadParents = !viewModel.draft.parentIDs.filter { !$0.isEmpty }.isEmpty
                         if let saved = await viewModel.save() {
                             selectedEditID = saved.id
-                            await library.reload()
+                            library.applySavedVariety(saved)
+                            if hadImages || hadParents {
+                                await library.reload()
+                            }
                         }
                     }
                 } label: {
@@ -257,17 +262,22 @@ struct VarietyEditorView: View {
                 Label(exactDuplicate == nil ? "似ている登録済み品種" : "既に登録済みの可能性があります", systemImage: exactDuplicate == nil ? "sparkle.magnifyingglass" : "exclamationmark.triangle")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(exactDuplicate == nil ? AppTheme.ink : AppTheme.strawberry)
-                ForEach(rows.prefix(5)) { variety in
+                ForEach(Array(rows.prefix(5))) { candidate in
                     Button {
+                        let variety = candidate.variety
                         selectedEditID = variety.id
                         viewModel.edit(variety, parentLinks: library.parentLinks)
                     } label: {
+                        let variety = candidate.variety
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(variety.name)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(AppTheme.ink)
-                                Text(candidateSubtitle(for: variety))
+                                HStack(spacing: 6) {
+                                    Text(variety.name)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(AppTheme.ink)
+                                    CapsuleBadge(text: candidate.kind.rawValue, tint: candidate.kind == .exact ? AppTheme.strawberry : AppTheme.gold)
+                                }
+                                Text(candidateSubtitle(for: candidate))
                                     .font(.caption)
                                     .foregroundStyle(AppTheme.muted)
                                     .lineLimit(1)
@@ -278,7 +288,7 @@ struct VarietyEditorView: View {
                         }
                         .padding(10)
                         .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(variety.isExactMatch(for: viewModel.draft.name) ? AppTheme.strawberry : AppTheme.line))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(candidate.kind == .exact ? AppTheme.strawberry : AppTheme.line))
                     }
                     .buttonStyle(.plain)
                 }
@@ -286,28 +296,24 @@ struct VarietyEditorView: View {
         }
     }
 
-    private var existingCandidates: [Variety] {
+    private var existingCandidates: [VarietyMatchCandidate] {
         let query = viewModel.draft.name
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        return library.activeVarieties
-            .filter { $0.id != (viewModel.draft.id ?? "") && $0.matchesSearch(query) }
-            .sorted {
-                if $0.isExactMatch(for: query) != $1.isExactMatch(for: query) {
-                    return $0.isExactMatch(for: query)
-                }
-                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-            }
+        return library.duplicateCandidates(for: query, limit: 8)
+            .filter { $0.variety.id != (viewModel.draft.id ?? "") }
     }
 
-    private var exactDuplicate: Variety? {
-        existingCandidates.first { $0.isExactMatch(for: viewModel.draft.name) }
+    private var exactDuplicate: VarietyMatchCandidate? {
+        existingCandidates.first { $0.kind == .exact }
     }
 
-    private func candidateSubtitle(for variety: Variety) -> String {
+    private func candidateSubtitle(for candidate: VarietyMatchCandidate) -> String {
+        let variety = candidate.variety
         var parts = [String]()
         if let prefecture = variety.originPrefecture { parts.append(prefecture) }
         if let number = variety.registrationNumber { parts.append("登録 \(number)") }
         if !variety.aliasNames.isEmpty { parts.append("別名 \(variety.aliasNames.prefix(2).joined(separator: ", "))") }
+        parts.append(candidate.kind.rawValue)
         return parts.isEmpty ? "登録済み" : parts.joined(separator: " / ")
     }
 

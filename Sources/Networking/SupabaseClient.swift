@@ -175,6 +175,17 @@ final class SupabaseClient {
         return try decoder.decode([T].self, from: data)
     }
 
+    func rpc<T: Decodable>(
+        _ type: T.Type,
+        function: String,
+        payload: [String: Any] = [:]
+    ) async throws -> T {
+        var request = try request(path: "rest/v1/rpc/\(function)", method: "POST")
+        request.httpBody = try jsonData(payload)
+        let data = try await data(for: request)
+        return try decoder.decode(T.self, from: data)
+    }
+
     func deleteRows(table: String, filters: [PostgrestFilter]) async throws {
         let queryItems = filters.map { URLQueryItem(name: $0.name, value: $0.value) }
         let request = try request(path: "rest/v1/\(table)", queryItems: queryItems, method: "DELETE")
@@ -260,6 +271,11 @@ final class SupabaseClient {
 
     func storageObjectRequest(bucket: String, path: String, method: String) throws -> URLRequest {
         try request(path: "storage/v1/object/\(bucket)/\(Self.escapedObjectPath(path))", method: method)
+    }
+
+    func publicStorageURL(bucket: String, path: String) -> URL? {
+        let base = config.url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return URL(string: "\(base)/storage/v1/object/public/\(bucket)/\(Self.escapedObjectPath(path))")
     }
 
     private func data(for request: URLRequest, allowEmpty: Bool = false) async throws -> Data {

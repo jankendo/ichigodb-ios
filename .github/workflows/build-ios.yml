@@ -22,6 +22,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 2
+
+      - name: Static quality gate
+        run: |
+          set -euo pipefail
+          git diff-tree --check --no-commit-id --root -r HEAD
+          JWT_PREFIX='eyJhbGciOiJI'
+          JWT_PATTERN="${JWT_PREFIX}UzI1Ni"
+          ROLE_PATTERN='service[_-]role'
+          if grep -R -I -n -E "${JWT_PATTERN}|${ROLE_PATTERN}" Sources Tests Config iOS README.md BUILD_MEMO.md .github supabase; then
+            echo "Potential secret material found in repository files." >&2
+            exit 1
+          fi
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -79,6 +93,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 2
 
       - name: Show Xcode version
         run: xcodebuild -version

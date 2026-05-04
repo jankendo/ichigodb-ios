@@ -183,6 +183,44 @@ final class IchigoRepository {
         try await client.selectAll(ReviewImage.self, table: "review_images", columns: "*", order: "created_at.desc")
     }
 
+    func fetchLibraryCards() async throws -> [VarietyLibraryCard] {
+        try await client.selectAll(
+            VarietyLibraryCard.self,
+            table: "variety_library_cards",
+            columns: "*",
+            order: "name.asc",
+            pageSize: 1000,
+            maxRows: 20000
+        )
+    }
+
+    func fetchReviewAnalysisCards() async throws -> [ReviewAnalysisCard] {
+        try await client.selectAll(
+            ReviewAnalysisCard.self,
+            table: "review_analysis_cards",
+            columns: "*",
+            order: "tasted_date.desc",
+            pageSize: 1000,
+            maxRows: 50000
+        )
+    }
+
+    func fetchReviewAnalysisCardsFallbackAllowed() async -> [ReviewAnalysisCard] {
+        (try? await fetchReviewAnalysisCards()) ?? []
+    }
+
+    func fetchAnalysisSnapshot() async throws -> AnalysisSnapshot {
+        try await client.rpc(AnalysisSnapshot.self, function: "get_analysis_snapshot")
+    }
+
+    func fetchAnalysisSnapshotFallbackAllowed(varieties: [Variety], reviews: [Review]) async -> AnalysisSnapshot {
+        do {
+            return try await fetchAnalysisSnapshot()
+        } catch {
+            return AnalysisSnapshot.make(varieties: varieties, reviews: reviews)
+        }
+    }
+
     func createOrUpdateVariety(_ draft: VarietyDraft, images: [UIImage] = []) async throws -> Variety {
         let name = try Validation.requireName(draft.name)
         try Validation.validateBrix(min: draft.brixMin, max: draft.brixMax)
@@ -406,6 +444,14 @@ final class IchigoRepository {
 
     func downloadImageData(bucket: String, path: String) async throws -> Data {
         try await client.downloadObject(bucket: bucket, path: path)
+    }
+
+    func publicImageURL(bucket: String, path: String) -> URL? {
+        client.publicStorageURL(bucket: bucket, path: path)
+    }
+
+    func uploadQueuedObject(bucket: String, path: String, data: Data, contentType: String) async throws {
+        try await client.uploadObject(bucket: bucket, path: path, data: data, contentType: contentType)
     }
 
     func downloadImage(bucket: String, path: String) async throws -> UIImage {

@@ -89,7 +89,11 @@ final class LibraryViewModelTests: XCTestCase {
     private func makeReviewViewModel() -> ReviewEditorViewModel {
         UserDefaults.standard.removeObject(forKey: "IchigoDB.reviewDraft.v1")
         UserDefaults.standard.removeObject(forKey: "IchigoDB.reviewQueue.v1")
+        let draftStore = DraftStore(folderName: "IchigoDBTestsDrafts")
+        draftStore.clear("IchigoDB.reviewDraft.v1")
+        draftStore.clear("IchigoDB.reviewQueue.v1")
+        draftStore.clear("IchigoDB.tastingSession.v1")
         let config = SupabaseConfig(url: URL(string: "https://example.supabase.co")!, anonKey: "anon")
-        return ReviewEditorViewModel(repository: IchigoRepository(client: SupabaseClient(config: config)))
+        return ReviewEditorViewModel(repository: IchigoRepository(client: SupabaseClient(config: config)), draftStore: draftStore)
     }
 }

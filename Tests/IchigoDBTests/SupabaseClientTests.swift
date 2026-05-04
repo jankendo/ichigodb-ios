@@ -40,4 +40,12 @@ final class SupabaseClientTests: XCTestCase {
         XCTAssertTrue(request.url?.absoluteString.contains("storage/v1/object/variety-images/varieties/a%20b/") == true)
         XCTAssertTrue(request.url?.absoluteString.contains(".jpg") == true)
     }
+
+    func testBuildsPublicStorageURL() throws {
+        let config = SupabaseConfig(url: URL(string: "https://example.supabase.co")!, anonKey: "anon")
+        let client = SupabaseClient(config: config)
+        let url = client.publicStorageURL(bucket: "review-images", path: "reviews/a b/photo.jpg")
+
+        XCTAssertEqual(url?.absoluteString, "https://example.supabase.co/storage/v1/object/public/review-images/reviews/a%20b/photo.jpg")
+    }
 }

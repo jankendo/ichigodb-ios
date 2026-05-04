@@ -72,8 +72,12 @@ struct ReviewEditorView: View {
             .alert("同じ日の評価があります", isPresented: $viewModel.duplicatePending) {
                 Button("上書き") {
                     Task {
-                        if await viewModel.save(overwriteDuplicate: true) != nil {
-                            await library.reload()
+                        let hadImages = !viewModel.selectedImages.isEmpty
+                        if let saved = await viewModel.save(overwriteDuplicate: true) {
+                            library.applySavedReview(saved)
+                            if hadImages {
+                                await library.reload()
+                            }
                         }
                     }
                 }
@@ -82,6 +86,9 @@ struct ReviewEditorView: View {
                 Text(duplicateMessage)
             }
             .onChange(of: viewModel.draft) { _ in
+                viewModel.persistDraft()
+            }
+            .onChange(of: viewModel.sessionDraft) { _ in
                 viewModel.persistDraft()
             }
         }
@@ -151,11 +158,17 @@ struct ReviewEditorView: View {
                         if !viewModel.draft.varietyID.isEmpty {
                             batchSelection.insert(viewModel.draft.varietyID)
                         }
+                        viewModel.sessionDraft.tastedDate = viewModel.draft.tastedDate
                         showBatchPicker = true
                     } label: {
                         Label("品種を複数選択", systemImage: "checklist")
                     }
                     .buttonStyle(SecondaryButtonStyle())
+
+                    DatePicker("共通試食日", selection: $viewModel.sessionDraft.tastedDate, in: ...Date(), displayedComponents: .date)
+
+                    TextField("共通メモ（任意）", text: $viewModel.sessionDraft.commonNote, axis: .vertical)
+                        .lineLimit(2...4)
 
                     if !batchSelection.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -383,8 +396,12 @@ struct ReviewEditorView: View {
 
                 Button {
                     Task {
-                        if await viewModel.save() != nil {
-                            await library.reload()
+                        let hadImages = !viewModel.selectedImages.isEmpty
+                        if let saved = await viewModel.save() {
+                            library.applySavedReview(saved)
+                            if hadImages {
+                                await library.reload()
+                            }
                         }
                     }
                 } label: {

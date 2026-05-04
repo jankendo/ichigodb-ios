@@ -44,7 +44,7 @@ enum VarietySortOption: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-struct VarietyThumbnailSource: Hashable {
+struct VarietyThumbnailSource: Hashable, Codable {
     var bucket: String
     var path: String
 
@@ -53,60 +53,125 @@ struct VarietyThumbnailSource: Hashable {
     }
 }
 
+struct VarietyMatchCandidate: Identifiable, Equatable {
+    enum MatchKind: String {
+        case exact = "完全一致"
+        case kana = "かな一致"
+        case alias = "別名一致"
+        case registration = "登録番号"
+        case partial = "部分一致"
+    }
+
+    var variety: Variety
+    var kind: MatchKind
+    var score: Int
+
+    var id: String { variety.id }
+}
+
 @MainActor
 final class VarietyLibraryViewModel: ObservableObject {
-    @Published var varieties: [Variety] = []
-    @Published var reviews: [Review] = []
-    @Published var parentLinks: [VarietyParentLink] = []
-    @Published var varietyImages: [VarietyImage] = []
-    @Published var reviewImages: [ReviewImage] = []
     @Published var signedImageURLs: [String: URL] = [:]
     @Published var loadedImages: [String: UIImage] = [:]
-    @Published var searchText = ""
-    @Published var lens: LibraryLens = .all
-    @Published var sortOption: VarietySortOption = .name
-    @Published var discoveryFilter: DiscoveryFilter = .all
-    @Published var prefectureFilter = ""
-    @Published var selectedTag = ""
+    @Published var searchText = "" { didSet { scheduleFilteredRefresh() } }
+    @Published var lens: LibraryLens = .all { didSet { rebuildFilteredNow() } }
+    @Published var sortOption: VarietySortOption = .name { didSet { rebuildFilteredNow() } }
+    @Published var discoveryFilter: DiscoveryFilter = .all { didSet { rebuildFilteredNow() } }
+    @Published var prefectureFilter = "" { didSet { rebuildFilteredNow() } }
+    @Published var selectedTag = "" { didSet { rebuildFilteredNow() } }
     @Published var selectedVarietyID: String?
+    @Published private(set) var filteredVarieties: [Variety] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
 
     private let repository: IchigoRepository
-    private let imageCache = ImageCacheStore()
+    private let dataStore: IchigoDataStore
+    private let imagePipeline = ImagePipeline()
     private let loadedImageLimit = 160
     private var loadedImageOrder: [String] = []
+    private var filterTask: Task<Void, Never>?
 
-    init(repository: IchigoRepository) {
+    init(repository: IchigoRepository, dataStore: IchigoDataStore? = nil) {
         self.repository = repository
-        self.varieties = repository.cachedVarieties()
-        self.reviews = repository.cachedReviews()
+        self.dataStore = dataStore ?? IchigoDataStore(repository: repository)
+        rebuildFilteredNow()
+    }
+
+    var varieties: [Variety] {
+        get { dataStore.varieties }
+        set {
+            dataStore.replaceVarieties(newValue)
+            rebuildFilteredNow()
+        }
+    }
+
+    var reviews: [Review] {
+        get { dataStore.reviews }
+        set {
+            dataStore.replaceReviews(newValue)
+            rebuildFilteredNow()
+        }
+    }
+
+    var parentLinks: [VarietyParentLink] {
+        get { dataStore.parentLinks }
+        set {
+            dataStore.replaceParentLinks(newValue)
+            rebuildFilteredNow()
+        }
+    }
+
+    var varietyImages: [VarietyImage] {
+        get { dataStore.varietyImages }
+        set {
+            dataStore.replaceVarietyImages(newValue)
+            rebuildFilteredNow()
+        }
+    }
+
+    var reviewImages: [ReviewImage] {
+        get { dataStore.reviewImages }
+        set {
+            dataStore.replaceReviewImages(newValue)
+            rebuildFilteredNow()
+        }
+    }
+
+    var analysisSnapshot: AnalysisSnapshot {
+        dataStore.analysisSnapshot
+    }
+
+    var reviewAnalysisCards: [ReviewAnalysisCard] {
+        dataStore.reviewAnalysisCards
+    }
+
+    var networkState: NetworkState {
+        dataStore.networkState
     }
 
     var discoveredIDs: Set<String> {
-        Set(reviews.filter { $0.deletedAt == nil }.map(\.varietyID))
+        dataStore.librarySnapshot.discoveredIDs
     }
 
     var activeVarieties: [Variety] {
-        varieties.filter { $0.deletedAt == nil }
+        dataStore.activeVarieties
     }
 
     var deletedVarieties: [Variety] {
-        varieties.filter { $0.deletedAt != nil }
+        dataStore.deletedVarieties
     }
 
     var activeReviews: [Review] {
-        reviews.filter { $0.deletedAt == nil }
+        dataStore.activeReviews
     }
 
     var deletedReviews: [Review] {
-        reviews.filter { $0.deletedAt != nil }
+        dataStore.deletedReviews
     }
 
     var progressText: String {
         let total = max(activeVarieties.count, 1)
-        let count = discoveredIDs.count
-        return "\(count)/\(total)"
+        return "\(discoveredIDs.count)/\(total)"
     }
 
     var completionRate: Double {
@@ -115,97 +180,65 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     var availableTags: [String] {
-        Array(Set(activeVarieties.flatMap(\.tags))).sorted()
+        dataStore.librarySnapshot.availableTags
     }
 
-    var filteredVarieties: [Variety] {
-        let filtered = activeVarieties.filter { variety in
-            if !prefectureFilter.isEmpty && variety.originPrefecture != prefectureFilter {
-                return false
-            }
-            if !selectedTag.isEmpty && !variety.tags.contains(selectedTag) {
-                return false
-            }
-            switch discoveryFilter {
-            case .all:
-                break
-            case .discovered:
-                guard discoveredIDs.contains(variety.id) else { return false }
-            case .undiscovered:
-                guard !discoveredIDs.contains(variety.id) else { return false }
-            }
-            return variety.matchesSearch(searchText)
-        }
-        let lensed: [Variety]
-        switch lens {
-        case .all:
-            lensed = filtered
-        case .discovered:
-            lensed = filtered.filter { discoveredIDs.contains($0.id) }
-        case .recent:
-            lensed = filtered.filter { latestReview(for: $0.id) != nil }
-        case .topRated:
-            lensed = filtered.filter { averageOverall(for: $0.id) != nil }
-        case .undiscovered:
-            lensed = filtered.filter { !discoveredIDs.contains($0.id) }
-        }
-        return sorted(lensed)
+    var recentReviewCards: [ReviewAnalysisCard] {
+        dataStore.reviewAnalysisCards
+            .filter { $0.deletedAt == nil }
+            .sorted { $0.tastedDate > $1.tastedDate }
     }
 
     func reload() async {
         isLoading = true
         errorMessage = nil
-        do {
-            async let varietiesTask = repository.fetchVarieties(includeDeleted: true)
-            async let reviewsTask = repository.fetchReviews(includeDeleted: true)
-            async let linksTask = repository.fetchParentLinks()
-            async let varietyImagesTask = repository.fetchVarietyImages()
-            async let reviewImagesTask = repository.fetchReviewImages()
-            varieties = try await varietiesTask
-            reviews = try await reviewsTask
-            parentLinks = try await linksTask
-            varietyImages = try await varietyImagesTask
-            reviewImages = try await reviewImagesTask
-            await preloadPrimaryImageURLs()
-        } catch {
+        await dataStore.refresh()
+        rebuildFilteredNow()
+        if let error = dataStore.error, dataStore.networkState != .online {
             errorMessage = error.localizedDescription
         }
+        prefetchVisibleThumbnails()
         isLoading = false
     }
 
+    func applySavedVariety(_ variety: Variety) {
+        dataStore.applyLocalMutation(variety: variety)
+        rebuildFilteredNow()
+    }
+
+    func applySavedReview(_ review: Review) {
+        dataStore.applyLocalMutation(review: review)
+        rebuildFilteredNow()
+        prefetchVisibleThumbnails()
+    }
+
     func reviewCount(for varietyID: String) -> Int {
-        activeReviews.filter { $0.varietyID == varietyID }.count
+        dataStore.librarySnapshot.reviewStatsByVarietyID[varietyID]?.reviewCount ?? 0
     }
 
     func latestReview(for varietyID: String) -> Review? {
-        activeReviews
-            .filter { $0.varietyID == varietyID }
-            .sorted { $0.tastedDate > $1.tastedDate }
-            .first
+        dataStore.librarySnapshot.latestReviewByVarietyID[varietyID]
     }
 
     func reviews(for varietyID: String) -> [Review] {
-        activeReviews
-            .filter { $0.varietyID == varietyID }
-            .sorted { $0.tastedDate > $1.tastedDate }
+        dataStore.librarySnapshot.reviewsByVarietyID[varietyID] ?? []
     }
 
     func averageOverall(for varietyID: String) -> Double? {
-        let rows = reviews(for: varietyID)
-        guard !rows.isEmpty else { return nil }
-        return Double(rows.map(\.overall).reduce(0, +)) / Double(rows.count)
+        dataStore.librarySnapshot.reviewStatsByVarietyID[varietyID]?.averageOverall
     }
 
     func tasteAverages(for varietyID: String) -> [(String, Double)] {
-        let rows = reviews(for: varietyID)
-        guard !rows.isEmpty else { return [] }
-        let count = Double(rows.count)
+        guard let stats = dataStore.librarySnapshot.reviewStatsByVarietyID[varietyID],
+              stats.reviewCount > 0 else {
+            return []
+        }
         return [
-            ("甘味", Double(rows.map(\.sweetness).reduce(0, +)) / count),
-            ("酸味", Double(rows.map(\.sourness).reduce(0, +)) / count),
-            ("香り", Double(rows.map(\.aroma).reduce(0, +)) / count),
-            ("食感", Double(rows.map(\.texture).reduce(0, +)) / count),
-            ("見た目", Double(rows.map(\.appearance).reduce(0, +)) / count)
+            ("甘味", stats.sweetnessAverage ?? 0),
+            ("酸味", stats.sournessAverage ?? 0),
+            ("香り", stats.aromaAverage ?? 0),
+            ("食感", stats.textureAverage ?? 0),
+            ("見た目", stats.appearanceAverage ?? 0)
         ]
     }
 
@@ -216,9 +249,7 @@ final class VarietyLibraryViewModel: ObservableObject {
 
     func latestReviewImage(for varietyID: String) -> ReviewImage? {
         for review in reviews(for: varietyID) {
-            if let image = reviewImages(for: review.id).max(by: {
-                ($0.createdAt ?? "") < ($1.createdAt ?? "")
-            }) {
+            if let image = reviewImages(for: review.id).first {
                 return image
             }
         }
@@ -226,20 +257,13 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     func thumbnailSource(for varietyID: String) -> VarietyThumbnailSource? {
-        if let image = latestReviewImage(for: varietyID) {
-            return VarietyThumbnailSource(bucket: "review-images", path: image.storagePath)
-        }
-        if let image = primaryImage(for: varietyID) {
-            return VarietyThumbnailSource(bucket: "variety-images", path: image.storagePath)
-        }
-        return nil
+        dataStore.librarySnapshot.thumbnailSourceByVarietyID[varietyID]
     }
 
     func gallerySources(for varietyID: String) -> [VarietyThumbnailSource] {
         let reviewSources = reviews(for: varietyID)
             .flatMap { review in
                 reviewImages(for: review.id)
-                    .sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }
                     .map { VarietyThumbnailSource(bucket: "review-images", path: $0.storagePath) }
             }
         let varietySources = images(for: varietyID)
@@ -247,51 +271,37 @@ final class VarietyLibraryViewModel: ObservableObject {
 
         var seen = Set<String>()
         return (reviewSources + varietySources).filter { source in
-            if seen.contains(source.cacheKey) {
-                return false
-            }
+            guard !seen.contains(source.cacheKey) else { return false }
             seen.insert(source.cacheKey)
             return true
         }
     }
 
     func images(for varietyID: String) -> [VarietyImage] {
-        varietyImages
-            .filter { $0.varietyID == varietyID }
-            .sorted {
-                if $0.isPrimary != $1.isPrimary {
-                    return $0.isPrimary && !$1.isPrimary
-                }
-                return ($0.createdAt ?? "") < ($1.createdAt ?? "")
-            }
+        dataStore.librarySnapshot.varietyImagesByVarietyID[varietyID] ?? []
     }
 
     func reviewImages(for reviewID: String) -> [ReviewImage] {
-        reviewImages
-            .filter { $0.reviewID == reviewID }
-            .sorted { ($0.createdAt ?? "") < ($1.createdAt ?? "") }
+        dataStore.librarySnapshot.reviewImagesByReviewID[reviewID] ?? []
     }
 
     func parents(for varietyID: String) -> [Variety] {
-        let ids = parentLinks
-            .filter { $0.childVarietyID == varietyID }
-            .sorted { ($0.parentOrder ?? 0) < ($1.parentOrder ?? 0) }
-            .map(\.parentVarietyID)
-        return ids.compactMap { id in varieties.first(where: { $0.id == id }) }
+        let ids = dataStore.librarySnapshot.parentsByVarietyID[varietyID] ?? []
+        let varietiesByID = dataStore.varietiesByID
+        return ids.compactMap { varietiesByID[$0] }
     }
 
     func children(for varietyID: String) -> [Variety] {
-        let ids = parentLinks
-            .filter { $0.parentVarietyID == varietyID }
-            .map(\.childVarietyID)
-        let order = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($0.element, $0.offset) })
-        return varieties
-            .filter { order[$0.id] != nil && $0.deletedAt == nil }
-            .sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
+        let ids = dataStore.librarySnapshot.childrenByVarietyID[varietyID] ?? []
+        let varietiesByID = dataStore.varietiesByID
+        return ids.compactMap { id in
+            guard let variety = varietiesByID[id], variety.deletedAt == nil else { return nil }
+            return variety
+        }
     }
 
     func varietyName(_ id: String) -> String {
-        varieties.first(where: { $0.id == id })?.name ?? "未選択"
+        dataStore.varietiesByID[id]?.name ?? "未選択"
     }
 
     func imageURL(for image: VarietyImage?) -> URL? {
@@ -305,7 +315,7 @@ final class VarietyLibraryViewModel: ObservableObject {
     }
 
     func imageURL(bucket: String, path: String) -> URL? {
-        signedImageURLs[cacheKey(bucket: bucket, path: path)]
+        signedImageURLs[cacheKey(bucket: bucket, path: path)] ?? repository.publicImageURL(bucket: bucket, path: path)
     }
 
     func loadedImage(bucket: String, path: String?) -> UIImage? {
@@ -328,21 +338,21 @@ final class VarietyLibraryViewModel: ObservableObject {
         do {
             signedImageURLs[key] = try await repository.signedURL(bucket: bucket, path: path)
         } catch {
-            // Missing image URLs should not block the app.
+            // A missing image URL should not block text-first browsing.
         }
     }
 
-    func ensureImage(bucket: String, path: String) async {
+    func ensureImage(bucket: String, path: String, targetPixelSize: Int = 640) async {
         let key = cacheKey(bucket: bucket, path: path)
         guard loadedImages[key] == nil else { return }
-        if let cached = imageCache.image(bucket: bucket, path: path) {
+        if let cached = imagePipeline.cachedImage(bucket: bucket, path: path, targetPixelSize: targetPixelSize) {
             rememberLoadedImage(cached, key: key)
             return
         }
-        do {
-            let data = try await repository.downloadImageData(bucket: bucket, path: path)
-            rememberLoadedImage(imageCache.store(data, bucket: bucket, path: path), key: key)
-        } catch {
+        let request = ImageRequest(bucket: bucket, path: path, targetPixelSize: targetPixelSize, priority: .visible)
+        if let image = await imagePipeline.image(for: request, repository: repository) {
+            rememberLoadedImage(image, key: key)
+        } else {
             await ensureSignedURL(bucket: bucket, path: path)
         }
     }
@@ -357,23 +367,107 @@ final class VarietyLibraryViewModel: ObservableObject {
         loadedImages[key] = nil
         loadedImageOrder.removeAll { $0 == key }
         signedImageURLs[key] = nil
-        imageCache.remove(bucket: bucket, path: path)
+        imagePipeline.remove(bucket: bucket, path: path)
+    }
+
+    func duplicateCandidates(for query: String, limit: Int = 8) -> [VarietyMatchCandidate] {
+        let cleaned = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return [] }
+        let compactQuery = cleaned.compactSearchText
+        return activeVarieties.compactMap { variety in
+            if variety.isExactMatch(for: cleaned) {
+                return VarietyMatchCandidate(variety: variety, kind: .exact, score: 100)
+            }
+            if variety.registrationNumber?.compactSearchText.contains(compactQuery) == true ||
+                variety.applicationNumber?.compactSearchText.contains(compactQuery) == true {
+                return VarietyMatchCandidate(variety: variety, kind: .registration, score: 90)
+            }
+            if variety.aliasNames.contains(where: { $0.compactSearchText.contains(compactQuery) }) {
+                return VarietyMatchCandidate(variety: variety, kind: .alias, score: 80)
+            }
+            if variety.name.compactSearchText.contains(compactQuery) {
+                return VarietyMatchCandidate(variety: variety, kind: .kana, score: 70)
+            }
+            if variety.matchesSearch(cleaned) {
+                return VarietyMatchCandidate(variety: variety, kind: .partial, score: 50)
+            }
+            return nil
+        }
+        .sorted {
+            if $0.score != $1.score {
+                return $0.score > $1.score
+            }
+            return $0.variety.name.localizedStandardCompare($1.variety.name) == .orderedAscending
+        }
+        .prefix(limit)
+        .map { $0 }
     }
 
     func deleteVariety(_ id: String) async {
+        dataStore.markVarietyDeleted(id: id)
+        rebuildFilteredNow()
         do {
             try await repository.softDeleteVariety(id: id)
-            await reload()
         } catch {
             errorMessage = error.localizedDescription
+            await reload()
         }
     }
 
-    private func preloadPrimaryImageURLs() async {
-        let firstImages = activeVarieties.compactMap { thumbnailSource(for: $0.id) }.prefix(80)
-        for image in firstImages {
-            await ensureImage(for: image)
+    private func scheduleFilteredRefresh() {
+        filterTask?.cancel()
+        filterTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.rebuildFilteredNow()
+                self?.prefetchVisibleThumbnails()
+            }
         }
+    }
+
+    private func rebuildFilteredNow() {
+        let cards = dataStore.librarySnapshot.cards.filter { card in
+            guard card.deletedAt == nil else { return false }
+            if !prefectureFilter.isEmpty && card.originPrefecture != prefectureFilter {
+                return false
+            }
+            if !selectedTag.isEmpty && !card.tags.contains(selectedTag) {
+                return false
+            }
+            switch discoveryFilter {
+            case .all:
+                break
+            case .discovered:
+                guard discoveredIDs.contains(card.id) else { return false }
+            case .undiscovered:
+                guard !discoveredIDs.contains(card.id) else { return false }
+            }
+            return card.matchesSearch(searchText)
+        }
+
+        let lensed: [VarietyLibraryCard]
+        switch lens {
+        case .all:
+            lensed = cards
+        case .discovered:
+            lensed = cards.filter { discoveredIDs.contains($0.id) }
+        case .recent:
+            lensed = cards.filter { $0.latestReviewDate != nil }
+        case .topRated:
+            lensed = cards.filter { $0.averageOverall != nil }
+        case .undiscovered:
+            lensed = cards.filter { !discoveredIDs.contains($0.id) }
+        }
+
+        let sortedCards = sorted(lensed)
+        let varietiesByID = dataStore.varietiesByID
+        filteredVarieties = sortedCards.compactMap { varietiesByID[$0.id] }
+    }
+
+    private func prefetchVisibleThumbnails() {
+        let sources = filteredVarieties.compactMap { thumbnailSource(for: $0.id) }
+        imagePipeline.prefetch(sources, repository: repository, targetPixelSize: 640)
     }
 
     private func cacheKey(bucket: String, path: String) -> String {
@@ -395,32 +489,31 @@ final class VarietyLibraryViewModel: ObservableObject {
         }
     }
 
-    private func sorted(_ rows: [Variety]) -> [Variety] {
+    private func sorted(_ rows: [VarietyLibraryCard]) -> [VarietyLibraryCard] {
         switch lens {
         case .all:
             switch sortOption {
             case .name:
                 return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             case .latestReview:
-                return rows.sorted { (latestReview(for: $0.id)?.tastedDate ?? "") > (latestReview(for: $1.id)?.tastedDate ?? "") }
+                return rows.sorted { ($0.latestReviewDate ?? "") > ($1.latestReviewDate ?? "") }
             case .averageScore:
-                return rows.sorted { (averageOverall(for: $0.id) ?? -1) > (averageOverall(for: $1.id) ?? -1) }
+                return rows.sorted { ($0.averageOverall ?? -1) > ($1.averageOverall ?? -1) }
             case .registeredYear:
-                return rows.sorted { ($0.registeredYear ?? 0) > ($1.registeredYear ?? 0) }
+                let varietiesByID = dataStore.varietiesByID
+                return rows.sorted { (varietiesByID[$0.id]?.registeredYear ?? 0) > (varietiesByID[$1.id]?.registeredYear ?? 0) }
             }
         case .discovered:
             return rows.sorted {
-                let leftDate = latestReview(for: $0.id)?.tastedDate ?? ""
-                let rightDate = latestReview(for: $1.id)?.tastedDate ?? ""
-                if leftDate != rightDate {
-                    return leftDate > rightDate
+                if ($0.latestReviewDate ?? "") != ($1.latestReviewDate ?? "") {
+                    return ($0.latestReviewDate ?? "") > ($1.latestReviewDate ?? "")
                 }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
         case .recent:
-            return rows.sorted { (latestReview(for: $0.id)?.tastedDate ?? "") > (latestReview(for: $1.id)?.tastedDate ?? "") }
+            return rows.sorted { ($0.latestReviewDate ?? "") > ($1.latestReviewDate ?? "") }
         case .topRated:
-            return rows.sorted { (averageOverall(for: $0.id) ?? 0) > (averageOverall(for: $1.id) ?? 0) }
+            return rows.sorted { ($0.averageOverall ?? 0) > ($1.averageOverall ?? 0) }
         case .undiscovered:
             return rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }

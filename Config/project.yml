@@ -40,6 +40,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.ichigodb.native.tests
         SWIFT_VERSION: 5.0
         IPHONEOS_DEPLOYMENT_TARGET: 17.0
+  IchigoDBUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ../Tests/IchigoDBUITests
+    dependencies:
+      - target: IchigoDB
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.ichigodb.native.uitests
+        SWIFT_VERSION: 5.0
+        IPHONEOS_DEPLOYMENT_TARGET: 17.0
 
 schemes:
   IchigoDB:
@@ -49,3 +61,4 @@ schemes:
     test:
       targets:
         - name: IchigoDBTests
+        - name: IchigoDBUITests

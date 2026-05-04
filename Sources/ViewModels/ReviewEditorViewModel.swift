@@ -5,12 +5,28 @@ struct QueuedReviewDraft: Identifiable, Codable, Equatable {
     var id = UUID().uuidString.lowercased()
     var draft: ReviewDraft
     var varietyName: String
+    var sessionNote: String?
     var createdAt = Date()
+}
+
+struct TastingSessionDraft: Codable, Equatable {
+    var id = UUID().uuidString.lowercased()
+    var tastedDate = Date()
+    var commonNote = ""
+    var selectedVarietyIDs: [String] = []
+
+    mutating func reset(keeping date: Date = Date()) {
+        id = UUID().uuidString.lowercased()
+        tastedDate = date
+        commonNote = ""
+        selectedVarietyIDs = []
+    }
 }
 
 @MainActor
 final class ReviewEditorViewModel: ObservableObject {
     @Published var draft = ReviewDraft()
+    @Published var sessionDraft = TastingSessionDraft()
     @Published var selectedImages: [UIImage] = []
     @Published var queuedDrafts: [QueuedReviewDraft] = []
     @Published var isSaving = false
@@ -24,18 +40,29 @@ final class ReviewEditorViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let repository: IchigoRepository
+    private let draftStore: DraftStore
     private let draftDefaultsKey = "IchigoDB.reviewDraft.v1"
     private let queueDefaultsKey = "IchigoDB.reviewQueue.v1"
+    private let sessionDefaultsKey = "IchigoDB.tastingSession.v1"
+    private let draftVersion = 1
 
-    init(repository: IchigoRepository) {
+    init(repository: IchigoRepository, draftStore: DraftStore = DraftStore()) {
         self.repository = repository
-        if let data = UserDefaults.standard.data(forKey: draftDefaultsKey),
+        self.draftStore = draftStore
+        if let restored = draftStore.load(ReviewDraft.self, for: draftDefaultsKey, version: draftVersion) {
+            self.draft = restored
+        } else if let data = UserDefaults.standard.data(forKey: draftDefaultsKey),
            let restored = try? JSONDecoder().decode(ReviewDraft.self, from: data) {
             self.draft = restored
         }
-        if let data = UserDefaults.standard.data(forKey: queueDefaultsKey),
+        if let restored = draftStore.load([QueuedReviewDraft].self, for: queueDefaultsKey, version: draftVersion) {
+            self.queuedDrafts = restored
+        } else if let data = UserDefaults.standard.data(forKey: queueDefaultsKey),
            let restored = try? JSONDecoder().decode([QueuedReviewDraft].self, from: data) {
             self.queuedDrafts = restored
+        }
+        if let restored = draftStore.load(TastingSessionDraft.self, for: sessionDefaultsKey, version: draftVersion) {
+            self.sessionDraft = restored
         }
     }
 
@@ -61,9 +88,8 @@ final class ReviewEditorViewModel: ObservableObject {
     }
 
     func persistDraft() {
-        if let data = try? JSONEncoder().encode(draft) {
-            UserDefaults.standard.set(data, forKey: draftDefaultsKey)
-        }
+        draftStore.save(draft, for: draftDefaultsKey, version: draftVersion)
+        draftStore.save(sessionDraft, for: sessionDefaultsKey, version: draftVersion)
     }
 
     func addCurrentDraftToQueue(varietyName: String) {
@@ -76,7 +102,7 @@ final class ReviewEditorViewModel: ObservableObject {
             return
         }
         queuedDrafts.insert(
-            QueuedReviewDraft(draft: draft, varietyName: varietyName),
+            QueuedReviewDraft(draft: draftWithSessionNote(draft), varietyName: varietyName, sessionNote: cleanedSessionNote),
             at: 0
         )
         let keptDate = draft.tastedDate
@@ -101,16 +127,19 @@ final class ReviewEditorViewModel: ObservableObject {
             return
         }
 
+        sessionDraft.selectedVarietyIDs = uniqueIDs
         let items = uniqueIDs.map { varietyID -> QueuedReviewDraft in
             var copy = draft
             copy.id = nil
             copy.varietyID = varietyID
-            return QueuedReviewDraft(draft: copy, varietyName: nameResolver(varietyID))
+            copy.tastedDate = sessionDraft.tastedDate
+            return QueuedReviewDraft(draft: draftWithSessionNote(copy), varietyName: nameResolver(varietyID), sessionNote: cleanedSessionNote)
         }
         queuedDrafts.insert(contentsOf: items, at: 0)
-        let keptDate = draft.tastedDate
+        let keptDate = sessionDraft.tastedDate
         draft = ReviewDraft()
         draft.tastedDate = keptDate
+        sessionDraft.reset(keeping: keptDate)
         selectedImages = []
         message = "\(items.count)件を食べ比べメモに追加しました。メモ画面からまとめて正式登録できます。"
         errorMessage = nil
@@ -160,9 +189,7 @@ final class ReviewEditorViewModel: ObservableObject {
     }
 
     private func persistQueue() {
-        if let data = try? JSONEncoder().encode(queuedDrafts) {
-            UserDefaults.standard.set(data, forKey: queueDefaultsKey)
-        }
+        draftStore.save(queuedDrafts, for: queueDefaultsKey, version: draftVersion)
     }
 
     func save(overwriteDuplicate: Bool = false) async -> Review? {
@@ -234,5 +261,21 @@ final class ReviewEditorViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    private var cleanedSessionNote: String? {
+        let value = sessionDraft.commonNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func draftWithSessionNote(_ source: ReviewDraft) -> ReviewDraft {
+        guard let note = cleanedSessionNote else { return source }
+        var copy = source
+        if copy.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            copy.comment = note
+        } else if !copy.comment.contains(note) {
+            copy.comment = "\(copy.comment)\n\(note)"
+        }
+        return copy
     }
 }
