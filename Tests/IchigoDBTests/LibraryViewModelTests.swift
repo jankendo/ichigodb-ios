@@ -81,6 +81,31 @@ final class LibraryViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.queuedDrafts.allSatisfy { $0.draft.sweetness == 5 && $0.draft.comment == "食べ比べ" })
     }
 
+    func testTastingSessionKeepsIndependentDraftsBeforeQueueing() {
+        let viewModel = makeReviewViewModel()
+        viewModel.updateTastingSessionSelection(["a", "b"], baseDraft: ReviewDraft(), nameResolver: { ["a": "A", "b": "B"][$0] ?? $0 })
+
+        var aDraft = viewModel.tastingDraft(for: "a")
+        aDraft.sweetness = 5
+        aDraft.comment = "Aだけ甘い"
+        viewModel.updateTastingDraft(aDraft, for: "a")
+
+        var bDraft = viewModel.tastingDraft(for: "b")
+        bDraft.sourness = 1
+        bDraft.comment = "Bは酸味控えめ"
+        viewModel.updateTastingDraft(bDraft, for: "b")
+
+        viewModel.queueTastingSession(nameResolver: { ["a": "A", "b": "B"][$0] ?? $0 })
+
+        XCTAssertEqual(viewModel.queuedDrafts.count, 2)
+        let queuedByVariety = Dictionary(uniqueKeysWithValues: viewModel.queuedDrafts.map { ($0.draft.varietyID, $0.draft) })
+        XCTAssertEqual(queuedByVariety["a"]?.sweetness, 5)
+        XCTAssertEqual(queuedByVariety["a"]?.comment, "Aだけ甘い")
+        XCTAssertEqual(queuedByVariety["b"]?.sourness, 1)
+        XCTAssertEqual(queuedByVariety["b"]?.comment, "Bは酸味控えめ")
+        XCTAssertTrue(viewModel.sessionDraft.selectedVarietyIDs.isEmpty)
+    }
+
     private func makeViewModel() -> VarietyLibraryViewModel {
         let config = SupabaseConfig(url: URL(string: "https://example.supabase.co")!, anonKey: "anon")
         return VarietyLibraryViewModel(repository: IchigoRepository(client: SupabaseClient(config: config)))

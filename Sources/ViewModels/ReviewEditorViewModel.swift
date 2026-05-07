@@ -14,12 +14,37 @@ struct TastingSessionDraft: Codable, Equatable {
     var tastedDate = Date()
     var commonNote = ""
     var selectedVarietyIDs: [String] = []
+    var activeVarietyID = ""
+    var draftsByVarietyID: [String: ReviewDraft] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case tastedDate
+        case commonNote
+        case selectedVarietyIDs
+        case activeVarietyID
+        case draftsByVarietyID
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString.lowercased()
+        tastedDate = try container.decodeIfPresent(Date.self, forKey: .tastedDate) ?? Date()
+        commonNote = try container.decodeIfPresent(String.self, forKey: .commonNote) ?? ""
+        selectedVarietyIDs = try container.decodeIfPresent([String].self, forKey: .selectedVarietyIDs) ?? []
+        activeVarietyID = try container.decodeIfPresent(String.self, forKey: .activeVarietyID) ?? selectedVarietyIDs.first ?? ""
+        draftsByVarietyID = try container.decodeIfPresent([String: ReviewDraft].self, forKey: .draftsByVarietyID) ?? [:]
+    }
 
     mutating func reset(keeping date: Date = Date()) {
         id = UUID().uuidString.lowercased()
         tastedDate = date
         commonNote = ""
         selectedVarietyIDs = []
+        activeVarietyID = ""
+        draftsByVarietyID = [:]
     }
 }
 
@@ -119,8 +144,67 @@ final class ReviewEditorViewModel: ObservableObject {
     }
 
     func addBatchToQueue(varietyIDs: [String], nameResolver: (String) -> String) {
-        let uniqueIDs = Array(Dictionary(grouping: varietyIDs.filter { !$0.isEmpty }, by: { $0 }).keys)
-            .sorted { nameResolver($0).localizedStandardCompare(nameResolver($1)) == .orderedAscending }
+        updateTastingSessionSelection(varietyIDs, baseDraft: draft, nameResolver: nameResolver)
+        queueTastingSession(nameResolver: nameResolver)
+    }
+
+    func updateTastingSessionSelection(_ varietyIDs: [String], baseDraft: ReviewDraft, nameResolver: (String) -> String) {
+        let uniqueIDs = sortedUniqueVarietyIDs(varietyIDs, nameResolver: nameResolver)
+        sessionDraft.selectedVarietyIDs = uniqueIDs
+
+        var updatedDrafts = sessionDraft.draftsByVarietyID
+        for varietyID in uniqueIDs where updatedDrafts[varietyID] == nil {
+            var copy = baseDraft
+            copy.id = nil
+            copy.varietyID = varietyID
+            copy.tastedDate = sessionDraft.tastedDate
+            updatedDrafts[varietyID] = copy
+        }
+        updatedDrafts = updatedDrafts.filter { uniqueIDs.contains($0.key) }
+        sessionDraft.draftsByVarietyID = updatedDrafts
+
+        if !uniqueIDs.contains(sessionDraft.activeVarietyID) {
+            sessionDraft.activeVarietyID = uniqueIDs.first ?? ""
+        }
+        persistDraft()
+    }
+
+    func setActiveTastingVariety(_ varietyID: String) {
+        guard sessionDraft.selectedVarietyIDs.contains(varietyID) else { return }
+        sessionDraft.activeVarietyID = varietyID
+        persistDraft()
+    }
+
+    func updateTastingSessionDate(_ date: Date) {
+        sessionDraft.tastedDate = date
+        for varietyID in sessionDraft.selectedVarietyIDs {
+            sessionDraft.draftsByVarietyID[varietyID]?.tastedDate = date
+        }
+        persistDraft()
+    }
+
+    func tastingDraft(for varietyID: String) -> ReviewDraft {
+        if let existing = sessionDraft.draftsByVarietyID[varietyID] {
+            return existing
+        }
+        var copy = draft
+        copy.id = nil
+        copy.varietyID = varietyID
+        copy.tastedDate = sessionDraft.tastedDate
+        return copy
+    }
+
+    func updateTastingDraft(_ draft: ReviewDraft, for varietyID: String) {
+        var copy = draft
+        copy.id = nil
+        copy.varietyID = varietyID
+        copy.tastedDate = sessionDraft.tastedDate
+        sessionDraft.draftsByVarietyID[varietyID] = copy
+        persistDraft()
+    }
+
+    func queueTastingSession(nameResolver: (String) -> String) {
+        let uniqueIDs = sortedUniqueVarietyIDs(sessionDraft.selectedVarietyIDs, nameResolver: nameResolver)
         guard !uniqueIDs.isEmpty else {
             errorMessage = "食べ比べする品種を選んでください。"
             return
@@ -130,12 +214,8 @@ final class ReviewEditorViewModel: ObservableObject {
             return
         }
 
-        sessionDraft.selectedVarietyIDs = uniqueIDs
         let items = uniqueIDs.map { varietyID -> QueuedReviewDraft in
-            var copy = draft
-            copy.id = nil
-            copy.varietyID = varietyID
-            copy.tastedDate = sessionDraft.tastedDate
+            let copy = tastingDraft(for: varietyID)
             return QueuedReviewDraft(draft: draftWithSessionNote(copy), varietyName: nameResolver(varietyID), sessionNote: cleanedSessionNote)
         }
         queuedDrafts.insert(contentsOf: items, at: 0)
@@ -148,6 +228,11 @@ final class ReviewEditorViewModel: ObservableObject {
         errorMessage = nil
         persistDraft()
         persistQueue()
+    }
+
+    private func sortedUniqueVarietyIDs(_ varietyIDs: [String], nameResolver: (String) -> String) -> [String] {
+        Array(Dictionary(grouping: varietyIDs.filter { !$0.isEmpty }, by: { $0 }).keys)
+            .sorted { nameResolver($0).localizedStandardCompare(nameResolver($1)) == .orderedAscending }
     }
 
     func loadQueuedDraft(_ item: QueuedReviewDraft) {

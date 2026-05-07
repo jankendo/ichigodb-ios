@@ -104,6 +104,16 @@ struct ReviewEditorView: View {
             .onChange(of: viewModel.entryRequestID) { _ in
                 mode = .entry
             }
+            .onChange(of: batchSelection) { ids in
+                viewModel.updateTastingSessionSelection(
+                    Array(ids),
+                    baseDraft: viewModel.draft,
+                    nameResolver: library.varietyName
+                )
+            }
+            .onAppear {
+                batchSelection = Set(viewModel.sessionDraft.selectedVarietyIDs)
+            }
         }
     }
 
@@ -159,7 +169,7 @@ struct ReviewEditorView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("複数品種を同時メモ")
                                 .font(.headline)
-                            Text("同じ日・同じスコア・同じメモで複数品種を一気に評価メモへ追加できます。")
+                            Text("品種をタブで切り替えて、それぞれ別スコア・別メモを保存前にまとめて編集できます。")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.muted)
                         }
@@ -171,14 +181,22 @@ struct ReviewEditorView: View {
                         if !viewModel.draft.varietyID.isEmpty {
                             batchSelection.insert(viewModel.draft.varietyID)
                         }
-                        viewModel.sessionDraft.tastedDate = viewModel.draft.tastedDate
+                        viewModel.updateTastingSessionDate(viewModel.draft.tastedDate)
                         showBatchPicker = true
                     } label: {
                         Label("品種を複数選択", systemImage: "checklist")
                     }
                     .buttonStyle(SecondaryButtonStyle())
 
-                    DatePicker("共通試食日", selection: $viewModel.sessionDraft.tastedDate, in: ...Date(), displayedComponents: .date)
+                    DatePicker(
+                        "共通試食日",
+                        selection: Binding(
+                            get: { viewModel.sessionDraft.tastedDate },
+                            set: { viewModel.updateTastingSessionDate($0) }
+                        ),
+                        in: ...Date(),
+                        displayedComponents: .date
+                    )
 
                     TextField("共通メモ（任意）", text: $viewModel.sessionDraft.commonNote, axis: .vertical)
                         .lineLimit(2...4)
@@ -193,10 +211,7 @@ struct ReviewEditorView: View {
                         }
 
                         Button {
-                            viewModel.addBatchToQueue(
-                                varietyIDs: Array(batchSelection),
-                                nameResolver: library.varietyName
-                            )
+                            viewModel.queueTastingSession(nameResolver: library.varietyName)
                             batchSelection.removeAll()
                             mode = .queue
                         } label: {
@@ -216,19 +231,29 @@ struct ReviewEditorView: View {
             }
 
             Section("2. スコア") {
-                ScoreCapsuleControl(title: "甘味", value: $viewModel.draft.sweetness)
-                ScoreCapsuleControl(title: "酸味", value: $viewModel.draft.sourness)
-                ScoreCapsuleControl(title: "香り", value: $viewModel.draft.aroma)
-                ScoreCapsuleControl(title: "食感", value: $viewModel.draft.texture)
-                ScoreCapsuleControl(title: "見た目", value: $viewModel.draft.appearance)
+                if hasTastingSession {
+                    tastingSessionEditor
+                } else {
+                    ScoreCapsuleControl(title: "甘味", value: $viewModel.draft.sweetness)
+                    ScoreCapsuleControl(title: "酸味", value: $viewModel.draft.sourness)
+                    ScoreCapsuleControl(title: "香り", value: $viewModel.draft.aroma)
+                    ScoreCapsuleControl(title: "食感", value: $viewModel.draft.texture)
+                    ScoreCapsuleControl(title: "見た目", value: $viewModel.draft.appearance)
+                }
             }
 
             Section("3. 任意メモ") {
-                TextField("購入場所", text: $viewModel.draft.purchasePlace)
-                OptionalIntField(title: "価格（円）", value: $viewModel.draft.priceJPY)
-                TextField("コメント", text: $viewModel.draft.comment, axis: .vertical)
-                    .lineLimit(3...8)
-                PhotoSelectionStrip(images: $viewModel.selectedImages, maxCount: 3)
+                if hasTastingSession {
+                    Label("食べ比べ中の購入場所・価格・コメントは、上の品種タブごとに入力できます。画像付き評価は1品種ずつ正式登録してください。", systemImage: "square.stack.3d.up")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                } else {
+                    TextField("購入場所", text: $viewModel.draft.purchasePlace)
+                    OptionalIntField(title: "価格（円）", value: $viewModel.draft.priceJPY)
+                    TextField("コメント", text: $viewModel.draft.comment, axis: .vertical)
+                        .lineLimit(3...8)
+                    PhotoSelectionStrip(images: $viewModel.selectedImages, maxCount: 3)
+                }
             }
 
             if !viewModel.queuedDrafts.isEmpty {
@@ -395,6 +420,47 @@ struct ReviewEditorView: View {
         viewModel.draft.varietyID.isEmpty ? "品種を選択" : library.varietyName(viewModel.draft.varietyID)
     }
 
+    private var hasTastingSession: Bool {
+        !viewModel.sessionDraft.selectedVarietyIDs.isEmpty
+    }
+
+    @ViewBuilder
+    private var tastingSessionEditor: some View {
+        let ids = selectedBatchIDs
+        if ids.isEmpty {
+            EmptyView()
+        } else {
+            let activeID = activeSessionVarietyID ?? ids[0]
+            VStack(alignment: .leading, spacing: 14) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(ids, id: \.self) { id in
+                            Button {
+                                viewModel.setActiveTastingVariety(id)
+                            } label: {
+                                Label(library.varietyName(id), systemImage: activeID == id ? "checkmark.circle.fill" : "circle")
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .foregroundStyle(activeID == id ? Color.white : AppTheme.ink)
+                                    .background(activeID == id ? AppTheme.strawberry : AppTheme.card, in: Capsule())
+                                    .overlay(Capsule().stroke(activeID == id ? Color.clear : AppTheme.line))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                TastingVarietyDraftCard(
+                    varietyName: library.varietyName(activeID),
+                    draft: sessionDraftBinding(for: activeID)
+                )
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
     private var historyVarietyName: String {
         viewModel.historyVarietyID.isEmpty ? "履歴品種: すべて" : "履歴品種: \(library.varietyName(viewModel.historyVarietyID))"
     }
@@ -402,6 +468,21 @@ struct ReviewEditorView: View {
     private var selectedBatchIDs: [String] {
         batchSelection
             .sorted { library.varietyName($0).localizedStandardCompare(library.varietyName($1)) == .orderedAscending }
+    }
+
+    private var activeSessionVarietyID: String? {
+        let selectedIDs = selectedBatchIDs
+        if selectedIDs.contains(viewModel.sessionDraft.activeVarietyID) {
+            return viewModel.sessionDraft.activeVarietyID
+        }
+        return selectedIDs.first
+    }
+
+    private func sessionDraftBinding(for varietyID: String) -> Binding<ReviewDraft> {
+        Binding(
+            get: { viewModel.tastingDraft(for: varietyID) },
+            set: { viewModel.updateTastingDraft($0, for: varietyID) }
+        )
     }
 
     @ViewBuilder
@@ -457,6 +538,44 @@ struct ReviewEditorView: View {
             return "同じ品種・試食日の評価を更新しますか？"
         }
         return "\(library.varietyName(review.varietyID)) / \(review.tastedDate) / 総合 \(review.overall)/10 を上書きします。"
+    }
+}
+
+private struct TastingVarietyDraftCard: View {
+    var varietyName: String
+    @Binding var draft: ReviewDraft
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(varietyName)
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.ink)
+                    Text("総合 \(draft.overall)/10")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.strawberry)
+                }
+                Spacer()
+                CapsuleBadge(text: "編集中", tint: AppTheme.gold)
+            }
+
+            ScoreCapsuleControl(title: "甘味", value: $draft.sweetness)
+            ScoreCapsuleControl(title: "酸味", value: $draft.sourness)
+            ScoreCapsuleControl(title: "香り", value: $draft.aroma)
+            ScoreCapsuleControl(title: "食感", value: $draft.texture)
+            ScoreCapsuleControl(title: "見た目", value: $draft.appearance)
+
+            Divider()
+
+            TextField("購入場所", text: $draft.purchasePlace)
+            OptionalIntField(title: "価格（円）", value: $draft.priceJPY)
+            TextField("この品種のコメント", text: $draft.comment, axis: .vertical)
+                .lineLimit(2...6)
+        }
+        .padding(12)
+        .background(AppTheme.elevated, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppTheme.line))
     }
 }
 
@@ -681,6 +800,18 @@ private struct MultiVarietyPickerSheet: View {
             .searchable(text: $searchText, prompt: "品種名・別名で検索")
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("食べ比べ品種")
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    dismissSearch()
+                    dismiss()
+                } label: {
+                    Label(selection.isEmpty ? "品種を選択してください" : "\(selection.count)件で決定", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(selection.isEmpty)
+                .padding()
+                .background(.thinMaterial)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("閉じる") {
