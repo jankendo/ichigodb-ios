@@ -1,13 +1,13 @@
 # IchigoDB iOS
 
-IchigoDB is a fully native SwiftUI iOS app for strawberry variety research. It connects directly to the existing Supabase project used by the Streamlit version and keeps the same public/anon access model.
+IchigoDB is a fully native SwiftUI iOS app for strawberry variety research. It connects directly to the existing Supabase project used by the Streamlit version and requires Supabase Auth before any DB access.
 
 ## Features
 
 - 品種図鑑: search, prefecture filter, discovered/undiscovered state, details, latest review, images.
 - 品種登録: create/edit varieties, traits, tags, parent varieties, and variety images.
 - 品種評価: fast tasting review entry, automatic overall score, duplicate-date overwrite confirmation, review images.
-- 交配図: native DAG layout with root, direction, depth, and node limit controls.
+- 分析: review history, ranking, trend, comparison, and cost-performance views.
 
 The app does not embed Streamlit or WebView content.
 
@@ -52,5 +52,6 @@ The downloaded file is `artifacts\IchigoDB.ipa`.
 ## Notes
 
 - The unsigned IPA is intended for a sideloading/signing workflow such as Sideloadly.
-- Existing Supabase schema and RLS policies are not changed by this repository.
-- The anon key is expected to be usable in a client app because the current DB policy already allows anon access.
+- The anon key is still compiled as the public Supabase client key, but all table and Storage access is restricted by RLS.
+- Only authenticated users listed in `public.app_users` with `role = 'admin'` can read or write app data.
+- The committed migration `20260507062000_restrict_ios_access_to_admin_auth.sql` removes legacy anon read/write policies.

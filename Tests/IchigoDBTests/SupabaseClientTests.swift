@@ -21,6 +21,15 @@ final class SupabaseClientTests: XCTestCase {
         XCTAssertTrue(request.url?.absoluteString.contains("deleted_at=is.null") == true)
     }
 
+    func testUsesAuthAccessTokenWhenAvailable() throws {
+        let config = SupabaseConfig(url: URL(string: "https://example.supabase.co")!, anonKey: "anon")
+        let client = SupabaseClient(config: config, accessTokenProvider: { "user-token" })
+        let request = try client.request(path: "rest/v1/varieties", method: "GET")
+
+        XCTAssertEqual(request.value(forHTTPHeaderField: "apikey"), "anon")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-token")
+    }
+
     func testFilterFactoriesMatchPostgrestSyntax() {
         XCTAssertEqual(PostgrestFilter.eq("id", "abc").value, "eq.abc")
         XCTAssertEqual(PostgrestFilter.isNull("deleted_at").value, "is.null")

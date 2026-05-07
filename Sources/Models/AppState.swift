@@ -38,6 +38,9 @@ enum AppError: LocalizedError, Equatable {
         if let supabaseError = error as? SupabaseError {
             return .supabase(supabaseError.localizedDescription)
         }
+        if let authError = error as? AuthError {
+            return .supabase(authError.localizedDescription)
+        }
         if let repositoryError = error as? RepositoryError {
             return .supabase(repositoryError.localizedDescription)
         }

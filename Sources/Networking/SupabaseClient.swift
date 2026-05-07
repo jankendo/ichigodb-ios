@@ -66,11 +66,13 @@ final class SupabaseClient {
     let config: SupabaseConfig
     private let session: URLSession
     private let decoder: JSONDecoder
+    private let accessTokenProvider: () -> String?
 
-    init(config: SupabaseConfig, session: URLSession = .shared) {
+    init(config: SupabaseConfig, session: URLSession = .shared, accessTokenProvider: @escaping () -> String? = { nil }) {
         self.config = config
         self.session = session
         self.decoder = JSONDecoder()
+        self.accessTokenProvider = accessTokenProvider
     }
 
     func select<T: Decodable>(
@@ -264,7 +266,7 @@ final class SupabaseClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(config.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(accessTokenProvider() ?? config.anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return request
     }

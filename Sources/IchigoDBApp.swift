@@ -24,6 +24,7 @@ struct IchigoDBApp: App {
 }
 
 private struct ConfiguredRootView: View {
+    @StateObject private var authVM: AuthViewModel
     @StateObject private var libraryVM: VarietyLibraryViewModel
     @StateObject private var editorVM: VarietyEditorViewModel
     @StateObject private var reviewVM: ReviewEditorViewModel
@@ -31,8 +32,11 @@ private struct ConfiguredRootView: View {
     @State private var selectedTab: AppTab = .home
 
     init(config: SupabaseConfig) {
-        let repository = IchigoRepository(client: SupabaseClient(config: config))
+        let tokenStore = AuthTokenStore()
+        let authVM = AuthViewModel(authClient: SupabaseAuthClient(config: config), tokenStore: tokenStore)
+        let repository = IchigoRepository(client: SupabaseClient(config: config, accessTokenProvider: { tokenStore.accessToken }))
         let dataStore = IchigoDataStore(repository: repository)
+        _authVM = StateObject(wrappedValue: authVM)
         _libraryVM = StateObject(wrappedValue: VarietyLibraryViewModel(repository: repository, dataStore: dataStore))
         _editorVM = StateObject(wrappedValue: VarietyEditorViewModel(repository: repository))
         _reviewVM = StateObject(wrappedValue: ReviewEditorViewModel(repository: repository))
@@ -40,8 +44,18 @@ private struct ConfiguredRootView: View {
     }
 
     var body: some View {
+        AuthGateView(authVM: authVM) {
+            await libraryVM.reload()
+        } content: {
+            appTabs
+        }
+    }
+
+    private var appTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView(editorVM: editorVM, reviewVM: reviewVM, selectedTab: $selectedTab)
+            HomeView(editorVM: editorVM, reviewVM: reviewVM, selectedTab: $selectedTab) {
+                await authVM.signOut()
+            }
                 .tabItem { Label("ホーム", systemImage: "house") }
                 .tag(AppTab.home)
 

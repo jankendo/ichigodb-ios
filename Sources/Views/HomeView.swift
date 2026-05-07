@@ -5,6 +5,7 @@ struct HomeView: View {
     @ObservedObject var editorVM: VarietyEditorViewModel
     @ObservedObject var reviewVM: ReviewEditorViewModel
     @Binding var selectedTab: AppTab
+    var onSignOut: (() async -> Void)?
 
     var body: some View {
         NavigationStack {
@@ -23,6 +24,18 @@ struct HomeView: View {
             .background(AppTheme.surface)
             .navigationTitle("IchigoDB")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let onSignOut {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Task { await onSignOut() }
+                        } label: {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                        }
+                        .accessibilityLabel("ログアウト")
+                    }
+                }
+            }
             .refreshable { await library.reload() }
             .scrollDismissesKeyboard(.interactively)
             .task {
